@@ -4,6 +4,7 @@ import pickle
 import datetime
 import os
 import random
+import serial
 from pylsl import StreamInlet, resolve_stream
 
 # MNE for real-time EEG processing
@@ -120,6 +121,29 @@ udp_socket_robot = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket_fes = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 logger.log_event("UDP sockets initialized for marker, robot, and FES channels.")
 
+# === Arduino actuator setup ===
+import serial
+
+arduino = None
+if getattr(config, "USE_ARDUINO", False):
+    try:
+        arduino = serial.Serial(
+            config.ARDUINO_PORT,
+            config.ARDUINO_BAUD,
+            timeout=0.1
+        )
+        logger.log_event(
+            f"✅ Arduino connected on {config.ARDUINO_PORT} @ {config.ARDUINO_BAUD} baud."
+        )
+    except Exception as e:
+        logger.log_event(
+            f"❌ Could not open Arduino port {config.ARDUINO_PORT}: {e}",
+            level="error"
+        )
+        arduino = None
+else:
+    logger.log_event("ℹ️ USE_ARDUINO = False — Arduino actuator disabled.")
+
 FES_toggle = config.FES_toggle
 logger.log_event(f"FES toggle status: {'Enabled' if FES_toggle else 'Disabled'}.")
 
@@ -185,7 +209,52 @@ _RC.FES_toggle = FES_toggle
 _RC.Prev_T = Prev_T
 _RC.counter = counter
 
+# Helper to send commands to Arduino
 
+def send_arduino_command_from_prediction(prediction, mode, logger=None):
+    """
+    Controla el guante como el robot:
+
+    - Trial MI correcto   → cerrar (1)
+    - Todo lo demás      → abrir (0)
+
+    prediction:
+        200 -> MI
+        100 -> REST
+        None -> Ambiguo
+
+    mode:
+        0 -> MI trial
+        1 -> REST trial
+    """
+    global arduino
+
+    if arduino is None:
+        return
+
+    try:
+
+        # TRIAL MI (flecha roja)
+        if mode == 0:
+            if prediction == 200:
+                arduino.write(b"1")
+                if logger:
+                    logger.log_event("🟢 Arduino: MI correcto → cerrar ('1')")
+            else:
+                arduino.write(b"0")
+                if logger:
+                    logger.log_event("🔵 Arduino: MI incorrecto/amb → abrir ('0')")
+
+        # TRIAL REST (pelota azul)
+        else:
+            # Siempre mantener en reposo
+            arduino.write(b"0")
+            if logger:
+                logger.log_event("🔵 Arduino: REST trial → abrir ('0')")
+
+    except Exception as e:
+        if logger:
+            logger.log_event(f"⚠️ Error sending command to Arduino: {e}", level="error")
 
 def main():
     # === Main Game Loop Initialization ===
@@ -215,6 +284,13 @@ def main():
     # Begin with fixation screen
     display_fixation_period(duration=3, eeg_state=eeg_state)
     logger.log_event("Initial fixation period complete. Beginning experimental loop.")
+
+    # Send Arduino to resting position (guante abierto) before first trial
+    if getattr(config, "USE_ARDUINO", False):
+        # prediction puede ser None o 100, da igual en modo REST: siempre manda '0'
+        send_arduino_command_from_prediction(None, mode=1, logger=logger)
+        logger.log_event("Arduino set to REST state before first trial (guante abierto).")
+
 
     while running and current_trial < len(trial_sequence):
         logger.log_event(f"--- Trial {current_trial+1}/{len(trial_sequence)} START ---")
@@ -320,6 +396,11 @@ def main():
 
         predictions_list.append(prediction)
         ground_truth_list.append(200 if mode == 0 else 100)
+
+        # === Nuevo: enviar al Arduino según predicción (estilo robot) ===
+        if getattr(config, "USE_ARDUINO", False):
+            send_arduino_command_from_prediction(prediction, mode, logger=logger)
+
         # Red Arrow Mode (MI)
         if mode == 0:
             if prediction == 200:  # Correct
@@ -463,6 +544,12 @@ def main():
             confidence=confidence,
             num_predictions=len(trial_probs)
         )
+
+        # Always bring back the glove to Resting position (open hand)
+        if getattr(config, "USE_ARDUINO", False):
+            # Forzamos modo REST (mode=1) sin importar predicción → siempre manda '0'
+            send_arduino_command_from_prediction(None, mode=1, logger=logger)
+            logger.log_event("Arduino forced to REST after trial (guante abierto).")
 
         # Inter-trial fixation (common to all trials)
         display_fixation_period(duration=3, eeg_state=eeg_state)

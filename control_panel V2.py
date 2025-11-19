@@ -19,6 +19,9 @@ Repo layout assumed:
 """
 
 import os, sys, shlex, time, re, tempfile, shutil, socket, subprocess, pathlib
+import serial           # This library was included to connect with the ARDUINO by serial port 
+import serial.tools.list_ports # This library was included to connect with the ARDUINO by serial port 
+
 from dataclasses import dataclass, field
 from typing import Optional, Dict
 
@@ -27,7 +30,8 @@ from PySide6.QtGui import QAction, QClipboard, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QCheckBox, QGridLayout, QLineEdit,
-    QTextEdit, QGroupBox, QFormLayout, QMessageBox, QSplitter, QToolBar, QStyle
+    QTextEdit, QGroupBox, QFormLayout, QMessageBox, QSplitter, QToolBar, QStyle, 
+    QFileDialog,   # <-- NUEVO
 )
 
 # ----------------- Paths & constants -----------------
@@ -150,6 +154,12 @@ class ControlPanel(QMainWindow):
         self.driver_choice = DRIVERS[0]
         self.training_subject = read_training_subject()
         self.fes_enabled_pref = read_fes_toggle()
+
+         # Arduino / BCI online config
+        self.arduino_enabled = False
+        self.serial_port_name = ""
+        self.serial_baudrate = "9600"
+        self.classifier_model_path = ""
 
         # Procs (QProcess-managed)
         self.marker = Proc("Marker Stream", f'python -u "{MARKER_PY}"', ROOT)
@@ -349,6 +359,59 @@ class ControlPanel(QMainWindow):
         grid.addWidget(QLabel("<i>External Apps:</i> eegoSports, LabRecorder (use Initialize / buttons)"), row, 0, 1, 5)
         row += 1
 
+        # ===== Arduino / Online BCI =====
+        arduino_group = QGroupBox("Arduino / Online BCI")
+        ag_layout = QGridLayout(arduino_group)
+
+        # Fila 0: Serial port + Refresh
+        ag_layout.addWidget(QLabel("Serial port:"), 0, 0)
+        self.cmb_serial_port = QComboBox()
+        ag_layout.addWidget(self.cmb_serial_port, 0, 1)
+        self.btn_serial_refresh = QPushButton("Refresh")
+        self.btn_serial_refresh.clicked.connect(self.on_serial_refresh)
+        ag_layout.addWidget(self.btn_serial_refresh, 0, 2)
+
+        # Fila 1: Baudrate
+        ag_layout.addWidget(QLabel("Baudrate:"), 1, 0)
+        self.le_serial_baud = QLineEdit(self.serial_baudrate)
+        ag_layout.addWidget(self.le_serial_baud, 1, 1)
+        self.le_serial_baud.editingFinished.connect(self.on_serial_baud_changed)
+
+        # Fila 2: Test connection + status
+        self.btn_serial_test = QPushButton("Test connection")
+        self.btn_serial_test.clicked.connect(self.on_serial_test)
+        ag_layout.addWidget(self.btn_serial_test, 2, 0)
+        self.lbl_serial_status = QLabel("Status: Not tested")
+        ag_layout.addWidget(self.lbl_serial_status, 2, 1, 1, 2)
+
+        # Fila 3: Enable Arduino control
+        self.chk_enable_arduino = QCheckBox("Enable Arduino control")
+        self.chk_enable_arduino.setChecked(self.arduino_enabled)
+        self.chk_enable_arduino.toggled.connect(self.on_arduino_toggled)
+        ag_layout.addWidget(self.chk_enable_arduino, 3, 0, 1, 3)
+
+        # Fila 4: Classifier .pkl
+        ag_layout.addWidget(QLabel("Classifier model (.pkl):"), 4, 0)
+        self.le_model_path = QLineEdit(self.classifier_model_path)
+        self.le_model_path.setReadOnly(True)
+        ag_layout.addWidget(self.le_model_path, 4, 1)
+        self.btn_browse_model = QPushButton("Browse...")
+        self.btn_browse_model.clicked.connect(self.on_browse_model)
+        ag_layout.addWidget(self.btn_browse_model, 4, 2)
+
+        # Fila 5: Manual test (Send 1 / Send 0)
+        ag_layout.addWidget(QLabel("Manual test:"), 5, 0)
+        self.btn_send_1 = QPushButton("Send '1' (close exo)")
+        self.btn_send_1.clicked.connect(self.on_send_arduino_one)
+        ag_layout.addWidget(self.btn_send_1, 5, 1)
+
+        self.btn_send_0 = QPushButton("Send '0' (open exo)")
+        self.btn_send_0.clicked.connect(self.on_send_arduino_zero)
+        ag_layout.addWidget(self.btn_send_0, 5, 2)
+
+        grid.addWidget(arduino_group, row, 0, 1, 5)
+        row += 1
+
         # ===== Logs Pane =====
         logw = QWidget(); split.addWidget(logw)
         vl = QVBoxLayout(logw)
@@ -375,6 +438,9 @@ class ControlPanel(QMainWindow):
         rt.addWidget(btn_open_udp_robot)
         self.txt_udp_log = QTextEdit(); self.txt_udp_log.setReadOnly(True); self.txt_udp_log.setMaximumHeight(180)
         rt.addWidget(QLabel("Notes:")); rt.addWidget(self.txt_udp_log)
+
+        # 🔌 Inicializamos la lista de puertos serie al arrancar
+        self.on_serial_refresh()
 
         self._building_ui = False
         self._refresh_log_view()
@@ -415,6 +481,12 @@ class ControlPanel(QMainWindow):
         for p in (self.marker, self.driver, self.fes):
             p.env["PYTHONUNBUFFERED"] = "1"
             p.env["TRAINING_SUBJECT"] = self.training_subject
+
+        # Arduino / Online BCI config (driver can read the Arduino info)
+            p.env["ARDUINO_ENABLED"]   = "1" if getattr(self, "arduino_enabled", False) else "0"
+            p.env["ARDUINO_PORT"]      = getattr(self, "serial_port_name", "") or ""
+            p.env["ARDUINO_BAUD"]      = str(getattr(self, "serial_baudrate", "9600"))
+            p.env["BCI_MODEL_PATH"]    = getattr(self, "classifier_model_path", "") or ""
 
         # Robot button state by mode
         self._update_robot_buttons_for_mode()
@@ -502,6 +574,155 @@ class ControlPanel(QMainWindow):
         time.sleep(0.1)
         self.on_fes_start()
         self._append_log("FES", f"[{self._ts()}] Refreshed FES listener\n")
+
+        # ----- Arduino / Online BCI panel -----
+    def on_serial_refresh(self):
+        """Rellena la lista de puertos serie disponibles."""
+        self.cmb_serial_port.clear()
+        try:
+            ports = list(serial.tools.list_ports.comports())
+        except Exception as e:
+            self._append_log("Panel", f"[{self._ts()}] Error listing serial ports: {e}\n")
+            self.lbl_serial_status.setText("Status: Error listing ports")
+            return
+
+        if not ports:
+            self.cmb_serial_port.addItem("No ports found", "")
+            self.lbl_serial_status.setText("Status: No ports")
+            return
+
+        for p in ports:
+            # Ej: "/dev/cu.usbmodem11101 (Arduino Nicla Vision)"
+            text = f"{p.device} ({p.description})"
+            self.cmb_serial_port.addItem(text, p.device)
+
+        # Si ya tenías un puerto seleccionado, intenta recuperarlo
+        if self.serial_port_name:
+            idx = self.cmb_serial_port.findData(self.serial_port_name)
+            if idx >= 0:
+                self.cmb_serial_port.setCurrentIndex(idx)
+
+        # Conectar cambio de selección (evitamos múltiples conexiones)
+        try:
+            self.cmb_serial_port.currentIndexChanged.disconnect(self.on_serial_port_changed)
+        except Exception:
+            pass
+        self.cmb_serial_port.currentIndexChanged.connect(self.on_serial_port_changed)
+
+    def on_serial_port_changed(self, index: int):
+        device = self.cmb_serial_port.itemData(index)
+        self.serial_port_name = device or ""
+        self._append_log("Panel", f"[{self._ts()}] Serial port set to: {self.serial_port_name}\n")
+        self._set_cmds_for_mode_and_driver()
+
+    def on_serial_baud_changed(self):
+        text = self.le_serial_baud.text().strip()
+        if not text:
+            return
+        try:
+            int(text)
+        except ValueError:
+            QMessageBox.warning(self, "Baudrate", "Baudrate must be an integer, e.g., 9600.")
+            self.le_serial_baud.setText(self.serial_baudrate)
+            return
+        self.serial_baudrate = text
+        self._append_log("Panel", f"[{self._ts()}] Serial baudrate set to: {self.serial_baudrate}\n")
+        self._set_cmds_for_mode_and_driver()
+
+    def on_serial_test(self):
+        """Abre el puerto seleccionado, prueba una conexión rápida y lo cierra."""
+        port = self.serial_port_name or self.cmb_serial_port.currentData()
+        if not port:
+            self.lbl_serial_status.setText("Status: No port selected")
+            QMessageBox.information(self, "Serial test", "No serial port selected.")
+            return
+
+        try:
+            baud = int(self.le_serial_baud.text().strip())
+        except ValueError:
+            self.lbl_serial_status.setText("Status: Invalid baudrate")
+            QMessageBox.warning(self, "Serial test", "Invalid baudrate.")
+            return
+
+        try:
+            ser = serial.Serial(port, baudrate=baud, timeout=1)
+            if ser.is_open:
+                self.lbl_serial_status.setText(f"Status: OK on {port}")
+                self.serial_port_name = port
+                self.serial_baudrate = str(baud)
+                self._append_log("Panel", f"[{self._ts()}] Serial test OK on {port} @ {baud}\n")
+                ser.close()
+                self._set_cmds_for_mode_and_driver()
+            else:
+                self.lbl_serial_status.setText("Status: Failed to open")
+                self._append_log("Panel", f"[{self._ts()}] Serial test FAILED (not open)\n")
+        except Exception as e:
+            self.lbl_serial_status.setText("Status: Error")
+            self._append_log("Panel", f"[{self._ts()}] Serial test ERROR: {e}\n")
+            QMessageBox.warning(self, "Serial test", f"Error opening {port}:\n{e}")
+
+    def _send_arduino_manual_value(self, value: str):
+        """
+        Envío rápido de '1' o '0' desde el panel.
+        Abre el puerto, manda el byte, cierra y escribe en logs.
+        """
+        port = self.serial_port_name or self.cmb_serial_port.currentData()
+        if not port:
+            self.lbl_serial_status.setText("Status: No port selected")
+            QMessageBox.information(self, "Arduino manual test", "No serial port selected.")
+            return
+
+        try:
+            baud = int(self.le_serial_baud.text().strip())
+        except ValueError:
+            self.lbl_serial_status.setText("Status: Invalid baudrate")
+            QMessageBox.warning(self, "Arduino manual test", "Invalid baudrate.")
+            return
+
+        try:
+            ser = serial.Serial(port, baudrate=baud, timeout=1)
+            if not ser.is_open:
+                self.lbl_serial_status.setText("Status: Failed to open")
+                self._append_log("Panel", f"[{self._ts()}] Arduino manual: failed to open {port}\n")
+                return
+
+            # Enviar el comando ('1' o '0')
+            ser.write(value.encode("ascii"))
+            ser.flush()
+            self._append_log("Panel", f"[{self._ts()}] Arduino manual: sent '{value}' on {port} @ {baud}\n")
+            self.lbl_serial_status.setText(f"Status: Sent '{value}' on {port}")
+            ser.close()
+
+        except Exception as e:
+            self.lbl_serial_status.setText("Status: Error")
+            self._append_log("Panel", f"[{self._ts()}] Arduino manual ERROR: {e}\n")
+            QMessageBox.warning(self, "Arduino manual test", f"Error sending '{value}' on {port}:\n{e}")
+
+    def on_send_arduino_one(self):
+        self._send_arduino_manual_value("1")
+
+    def on_send_arduino_zero(self):
+        self._send_arduino_manual_value("0")
+
+    def on_arduino_toggled(self, checked: bool):
+        self.arduino_enabled = bool(checked)
+        state_txt = "ENABLED" if self.arduino_enabled else "DISABLED"
+        self._append_log("Panel", f"[{self._ts()}] Arduino control {state_txt}\n")
+        self._set_cmds_for_mode_and_driver()
+
+    def on_browse_model(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select classifier model (.pkl)",
+            ROOT,
+            "Pickle files (*.pkl);;All files (*.*)"
+        )
+        if not path:
+            return
+        self.classifier_model_path = path
+        self.le_model_path.setText(path)
+        self._append_log("Panel", f"[{self._ts()}] Classifier model selected:\n  {path}\n")
+        self._set_cmds_for_mode_and_driver()
 
     # ----- Driver -----
     def on_driver_start(self):

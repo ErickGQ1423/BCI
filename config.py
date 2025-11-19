@@ -1,8 +1,11 @@
 # Configuration file for EEG experiments
 
 # Relevant Directories
-WORKING_DIR = "/home/arman-admin/Projects/Harmony/"
-DATA_DIR = "/home/arman-admin/Documents/CurrentStudy"
+# WORKING_DIR = "/home/arman-admin/Projects/Harmony/"
+# DATA_DIR = "/home/arman-admin/Documents/CurrentStudy"
+
+WORKING_DIR = r"C:\Users\USER\OneDrive - Universidad Autonoma de Guadalajara\Estancia Texas parte 2\Proyecto\BCI"
+DATA_DIR    = r"C:\Users\USER\OneDrive - Universidad Autonoma de Guadalajara\Estancia Texas parte 2\Proyecto\CurrentStudy"
 
 TRAINING_SUBJECT = "F25CLASS_SUBJ_006"
 # EEG Settings
@@ -172,3 +175,12 @@ UDP_CONTROL_BIND = {
     "IP":   "192.168.2.2",  # your control Control Modul's IP
     "PORT": 8080
 }
+
+# === Arduino actuator ===
+USE_ARDUINO = True          # Actívalo o apágalo
+ARDUINO_PORT = "COM5"       # Windows → COMn / Mac → /dev/cu.usbmodemXXX
+ARDUINO_BAUD = 9600         # Velocidad de tu sketch de Arduino
+
+# Mapeo de comandos según el clasificador
+ARDUINO_CMD_MI   = b"1"     # Detectó movimiento (label 200)
+ARDUINO_CMD_REST = b"0"     # Detectó reposo o ambiguo

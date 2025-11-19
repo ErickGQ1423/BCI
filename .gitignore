@@ -1,13 +1,13 @@
-# Byte-compiled / optimized / DLL files
+# ---------- Python bytecode ----------
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# C extensions
+# ---------- C extensions ----------
 *.so
 
-# Distribution / packaging
+# ---------- Packaging ----------
 .Python
 build/
 develop-eggs/
@@ -24,18 +24,46 @@ var/
 .installed.cfg
 *.egg
 
-# Virtual environments
+# ---------- Virtual environments ----------
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints
+# ---------- Jupyter ----------
+.ipynb_checkpoints/
 
-# VSCode settings
+# ---------- VSCode ----------
 .vscode/
 
-# macOS metadata
+# ---------- macOS ----------
 .DS_Store
+
+# ---------- Project-specific ignores ----------
+# No subir archivos de EEG
+*.xdf
+
+# No subir modelos
+*.pkl
+*.sav
+*.npz
+
+# Logs y temporales
+*.log
+*.tmp
+
+# Carpeta de datos del estudio si está local
+CurrentStudy/
+training_data/
+
+# Archivos grandes
+*.zip
+*.7z
+*.rar
+
+# Archivos de Windows
+Thumbs.db
+
+# Si llegas a exportar figuras grandes
+figures/
