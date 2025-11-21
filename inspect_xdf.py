@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # === CONFIGURACIÓN ===
-file_path = r"C:\Users\USER\OneDrive - Universidad Autonoma de Guadalajara\Estancia Texas parte 2\Proyecto\xdf archivos de prueba\sub-CLASS_SUBJ_132_ses-S002OFFLINE_NOFES_task-Default_run-001_eeg.xdf"  # <-- pon aquí tu archivo .xdf
+file_path = "/home/lab-admin/Documents/CurrentStudy/sub-ErickGuzman/ses-S001/eeg/sub-ErickGuzman_ses-S001_task-Default_run-001_eeg.xdf" # <-- pon aquí tu archivo .xdf
 
 # === CARGA DEL ARCHIVO ===
 streams, header = pyxdf.load_xdf(file_path)

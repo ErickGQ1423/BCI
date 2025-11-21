@@ -22,6 +22,8 @@ import os, sys, shlex, time, re, tempfile, shutil, socket, subprocess, pathlib
 import serial           # This library was included to connect with the ARDUINO by serial port 
 import serial.tools.list_ports # This library was included to connect with the ARDUINO by serial port 
 
+from config import ARDUINO_PORT
+
 from dataclasses import dataclass, field
 from typing import Optional, Dict
 
@@ -592,15 +594,25 @@ class ControlPanel(QMainWindow):
             return
 
         for p in ports:
-            # Ej: "/dev/cu.usbmodem11101 (Arduino Nicla Vision)"
-            text = f"{p.device} ({p.description})"
+            desc = p.description or "n/a"
+            text = f"{p.device} ({desc})"
+            # userData = nombre real del dispositivo
             self.cmb_serial_port.addItem(text, p.device)
 
-        # Si ya tenías un puerto seleccionado, intenta recuperarlo
+        # 1) Si ya había un puerto guardado en la sesión, recupéralo
+        idx = -1
         if self.serial_port_name:
             idx = self.cmb_serial_port.findData(self.serial_port_name)
-            if idx >= 0:
-                self.cmb_serial_port.setCurrentIndex(idx)
+
+        # 2) Si no, intenta usar el ARDUINO_PORT del config.py
+        if idx < 0:
+            idx = self.cmb_serial_port.findData(ARDUINO_PORT)
+
+        # 3) Si todavía no se encuentra, deja el primero
+        if idx < 0:
+            idx = 0
+
+        self.cmb_serial_port.setCurrentIndex(idx)
 
         # Conectar cambio de selección (evitamos múltiples conexiones)
         try:

@@ -4,12 +4,17 @@
 # WORKING_DIR = "/home/arman-admin/Projects/Harmony/"
 # DATA_DIR = "/home/arman-admin/Documents/CurrentStudy"
 
-WORKING_DIR = r"C:\Users\USER\OneDrive - Universidad Autonoma de Guadalajara\Estancia Texas parte 2\Proyecto\BCI"
-DATA_DIR    = r"C:\Users\USER\OneDrive - Universidad Autonoma de Guadalajara\Estancia Texas parte 2\Proyecto\CurrentStudy"
+# WORKING_DIR = r"C:\Users\USER\OneDrive - Universidad Autonoma de Guadalajara\Estancia Texas parte 2\Proyecto\BCI"
+# DATA_DIR    = r"C:\Users\USER\OneDrive - Universidad Autonoma de Guadalajara\Estancia Texas parte 2\Proyecto\CurrentStudy"
 
-TRAINING_SUBJECT = "F25CLASS_SUBJ_006"
+
+WORKING_DIR = "/home/lab-admin/BCI_project/BCI"
+DATA_DIR = "/home/lab-admin/BCI_project/CurrentStudy"
+
+
+TRAINING_SUBJECT = "Prueba"
 # EEG Settings
-CAP_TYPE = 32
+CAP_TYPE = 32  
 LOWCUT = 8  # Hz
 HIGHCUT = 13  # Hz
 LOWCUT_ERRP = 1 #Hz
@@ -24,7 +29,7 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 20  # Total number of trials
+TOTAL_TRIALS = 4  # Total number of trials
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
@@ -178,7 +183,7 @@ UDP_CONTROL_BIND = {
 
 # === Arduino actuator ===
 USE_ARDUINO = True          # Actívalo o apágalo
-ARDUINO_PORT = "COM5"       # Windows → COMn / Mac → /dev/cu.usbmodemXXX
+ARDUINO_PORT  = "/dev/ttyACM0"       # Windows → COMn / Mac 5"       # Windows → COMn → /dev/cu.usbmodemXXX
 ARDUINO_BAUD = 9600         # Velocidad de tu sketch de Arduino
 
 # Mapeo de comandos según el clasificador
