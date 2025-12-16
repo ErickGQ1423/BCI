@@ -29,7 +29,7 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 4  # Total number of trials
+TOTAL_TRIALS = 2  # Total number of trials
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
