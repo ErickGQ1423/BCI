@@ -213,17 +213,45 @@ while running and current_trial < len(trial_sequence):
     logger.log_event(f"Starting trial {current_trial+1}/{len(trial_sequence)} — Mode: {'MI' if mode == 0 else 'REST'}")
 
     # Triggers
+    # if mode == 0:
+    #     send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["MI_BEGIN"], logger=logger)
+    #     logger.log_event("Sent MI_BEGIN trigger.")
+    #     if FES_toggle == 1:
+    #         send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_SENS_GO", logger=logger)
+    #         logger.log_event("FES sensory stimulation sent.")
+    #     else:
+    #         logger.log_event("FES disabled — skipping sensory stimulation.")
+    # else:
+    #     send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["REST_BEGIN"], logger=logger)
+    #     logger.log_event("Sent REST_BEGIN trigger.")
+    # Triggers
     if mode == 0:
-        send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["MI_BEGIN"], logger=logger)
+        print(f"[DEBUG] Sending MI_BEGIN -> {config.TRIGGERS['MI_BEGIN']} to {config.UDP_MARKER['IP']}:{config.UDP_MARKER['PORT']}")
+        send_udp_message(
+            udp_socket_marker,
+            config.UDP_MARKER["IP"],
+            config.UDP_MARKER["PORT"],
+            config.TRIGGERS["MI_BEGIN"],
+            logger=logger
+        )
         logger.log_event("Sent MI_BEGIN trigger.")
+
         if FES_toggle == 1:
             send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_SENS_GO", logger=logger)
             logger.log_event("FES sensory stimulation sent.")
         else:
             logger.log_event("FES disabled — skipping sensory stimulation.")
     else:
-        send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["REST_BEGIN"], logger=logger)
+        print(f"[DEBUG] Sending REST_BEGIN -> {config.TRIGGERS['REST_BEGIN']} to {config.UDP_MARKER['IP']}:{config.UDP_MARKER['PORT']}")
+        send_udp_message(
+            udp_socket_marker,
+            config.UDP_MARKER["IP"],
+            config.UDP_MARKER["PORT"],
+            config.TRIGGERS["REST_BEGIN"],
+            logger=logger
+        )
         logger.log_event("Sent REST_BEGIN trigger.")
+
 
     # Show feedback
     logger.log_event(f"Feedback period started ({'MI' if mode == 0 else 'REST'}) for {config.TIME_MI} sec.")
@@ -232,6 +260,7 @@ while running and current_trial < len(trial_sequence):
 
     # Post-feedback
     if mode == 0:
+        print(f"[DEBUG] Sending MI_END -> {config.TRIGGERS['MI_END']} to {config.UDP_MARKER['IP']}:{config.UDP_MARKER['PORT']}")
         send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["MI_END"], logger=logger)
         logger.log_event("Sent MI_END trigger.")
         messages = ["Robot Move"]
@@ -247,6 +276,7 @@ while running and current_trial < len(trial_sequence):
         send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_BEGIN"], logger=logger)
         logger.log_event(f"Sent ROBOT_BEGIN trigger with trajectory: {config.ROBOT_TRAJECTORY}")
     else:
+        print(f"[DEBUG] Sending REST_END -> {config.TRIGGERS['REST_END']} to {config.UDP_MARKER['IP']}:{config.UDP_MARKER['PORT']}")
         send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["REST_END"], logger=logger)
         logger.log_event("Sent REST_END trigger.")
         messages = ["Robot Stationary"]
@@ -255,6 +285,7 @@ while running and current_trial < len(trial_sequence):
         duration = config.TIME_STATIONARY
 
     logger.log_event(f"Displayed message: '{messages[0]}' for {duration} sec.")
+
     display_multiple_messages_with_udp(
         messages=messages, colors=colors, offsets=[0],
         duration=duration, udp_messages=udp_messages,
@@ -276,7 +307,7 @@ while running and current_trial < len(trial_sequence):
         expect_ack=True,                # <--- wait for ACK
         ack_timeout=1.0,                # optional, default 0.5s
         max_retries=1                   # optional, resend once if timeout
-    )
+        )
 
     display_fixation_period(duration=3)
     logger.log_event("Displayed fixation period.")

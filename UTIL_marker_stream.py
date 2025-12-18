@@ -40,15 +40,28 @@ message_queue = queue.Queue()
 # CORE FUNCTIONS
 # ─────────────────────────────────────────────────────────
 
+# def get_eeg_inlet():
+#     logging.info("Resolving EEG stream...")
+#     streams = resolve_stream('type', 'EEG')
+#     inlet = StreamInlet(streams[0])
+#     logging.info("EEG stream connected.")
+#     return inlet
+
 def get_eeg_inlet():
     logging.info("Resolving EEG stream...")
     streams = resolve_stream('type', 'EEG')
+    if not streams:
+        raise RuntimeError("No EEG stream found via LSL.")
+    for i,s in enumerate(streams):
+        logging.info(f"EEG cand {i}: name={s.name()} type={s.type()} ch={s.channel_count()} sid={s.source_id()}")
     inlet = StreamInlet(streams[0])
-    logging.info("EEG stream connected.")
+    info = inlet.info()
+    logging.info(f"Using EEG inlet: name={info.name()} sid={info.source_id()} ch={info.channel_count()}")
     return inlet
 
-def get_current_eeg_timestamp(inlet, udp_received_time=0, timeout=0.02):
-    inlet.flush()
+
+def get_current_eeg_timestamp(inlet, udp_received_time=0, timeout=0.2):
+    #inlet.flush()
     local_timestamp = local_clock()  # fallback
     sample, timestamp = inlet.pull_sample(timeout=timeout)
     timestamp_after_pull = local_clock()

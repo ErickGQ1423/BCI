@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # === CONFIGURACIÓN ===
-file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P004/ses-S001/eeg/sub-P004_ses-S001_task-Default_run-001_eeg.xdf"
+file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P008/ses-S170/eeg/sub-P008_ses-S170_task-Default_run-001_eeg.xdf"
 
 # === CARGA DEL ARCHIVO ===
 streams, header = pyxdf.load_xdf(file_path)
@@ -59,7 +59,20 @@ print("Shapes finales:", data.shape, ts.shape)
 # =============================================================
 # === RECORTAR SOLO UN FRAGMENTO DE TIEMPO =====================
 # =============================================================
-t0, t1 = 0, 20  # segundos a visualizar
+# t0, t1 = 20, 100  # segundos a visualizar
+# mask = (ts >= ts[0] + t0) & (ts <= ts[0] + t1)
+
+# --- definir ventana automáticamente alrededor de markers ---
+if markers is not None:
+    m_ts = np.asarray(markers['time_stamps'])
+    if len(m_ts) > 0:
+        t0 = max(0, (m_ts.min() - ts[0]) - 2.0)   # 2 s antes
+        t1 = (m_ts.max() - ts[0]) + 2.0           # 2 s después
+    else:
+        t0, t1 = 0, 40
+else:
+    t0, t1 = 0, 40
+
 mask = (ts >= ts[0] + t0) & (ts <= ts[0] + t1)
 
 ts_seg = ts[mask]
@@ -70,8 +83,24 @@ t_rel = ts_seg - ts_seg[0]   # tiempo relativo dentro del segmento
 # === IMPRIMIR Y RESUMIR EVENTOS DESDE MARKERS ================
 # =============================================================
 if markers is not None:
-    m_ts  = np.asarray(markers['time_stamps'])
-    m_lab = np.asarray(markers['time_series']).ravel()
+    m_ts = np.asarray(markers['time_stamps'])
+    m_2d = np.asarray(markers['time_series'])  # shape (n_events, 4)
+    m_lab = m_2d[:, 0]  # SOLO el ID del marker (100/200/etc)
+
+    print("\n[DEBUG] MarkerStream vs EEG timestamps:")
+    print("  n_markers =", len(m_ts))
+    if len(m_ts) > 0:
+        print("  Marker min ts =", m_ts.min())
+        print("  Marker max ts =", m_ts.max())
+    print("  EEG ts[0] =", ts[0])
+    print("  EEG ts[-1] =", ts[-1])
+    print("  Segmento EEG ts_seg[0], ts_seg[-1] =", ts_seg[0], ts_seg[-1])
+
+    if len(m_ts) > 0:
+        print("  Primeros 5 markers (ts, id):")
+        for i in range(min(5, len(m_ts))):
+            print("   ", i, "ts=", m_ts[i], "id=", int(m_lab[i]))
+
 
     # markers dentro del segmento t0–t1
     mask_m = (m_ts >= ts_seg[0]) & (m_ts <= ts_seg[-1])

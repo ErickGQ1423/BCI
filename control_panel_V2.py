@@ -49,7 +49,7 @@ FES_PY = os.path.join(ROOT, "FES_listener.py")
 STMSETUP_PY = os.path.join(ROOT, "STMsetup.py")
 INIT_SH = os.path.join(ROOT, "initialize_devices.sh")
 
-UDP_MARKER = ("127.0.0.1", 12345)  # readiness check (port-in-use)
+UDP_MARKER = ("127.0.0.1", 15000)  # readiness check (port-in-use)
 
 # Modes choose which robot tool to launch remotely
 MODES = ["Gaze_Tracking", "MI_Bimanual", "Simulation"]
@@ -65,6 +65,28 @@ DRIVERS = [
 # ----------------- Config read/write helpers -----------------
 SUBJECT_RE = re.compile(r'^(TRAINING_SUBJECT\s*=\s*)([\'"])([^\'"]+)\2\s*$', re.M)
 FES_RE     = re.compile(r'^(FES_toggle\s*=\s*)([01])\s*$', re.M)
+
+
+
+SIM_RE = re.compile(r'^(SIMULATION_MODE\s*=\s*)(True|False)(\s*(#.*)?)\s*$', re.M)
+
+def read_simulation_mode(default=False) -> bool:
+    txt = read_text(CONFIG_PY)
+    m = SIM_RE.search(txt)
+    if not m:
+        return bool(default)
+    return (m.group(2) == "True")
+
+def write_simulation_mode(val: bool):
+    val_txt = "True" if val else "False"
+    txt = read_text(CONFIG_PY)
+    if SIM_RE.search(txt):
+        new = SIM_RE.sub(rf'\g<1>{val_txt}', txt)
+    else:
+        sep = "" if (txt.endswith("\n") or txt == "") else "\n"
+        new = txt + f"{sep}SIMULATION_MODE = {val_txt}\n"
+    write_atomic(CONFIG_PY, new)
+
 
 def read_text(path: str) -> str:
     try:
@@ -153,6 +175,15 @@ class ControlPanel(QMainWindow):
 
         # State
         self.mode = MODES[0]
+        # Prefer config-driven initial mode
+        try:
+            sim_cfg = read_simulation_mode(default=False)
+        except Exception:
+            sim_cfg = False
+        self.mode = "Simulation" if sim_cfg else MODES[0]
+
+
+
         self.driver_choice = DRIVERS[0]
         self.training_subject = read_training_subject()
         self.fes_enabled_pref = read_fes_toggle()
@@ -512,6 +543,15 @@ class ControlPanel(QMainWindow):
 
     def on_mode_changed(self, text: str):
         self.mode = text
+
+        # Keep config boolean in sync with dropdown
+        sim_on = (self.mode == "Simulation")
+        try:
+            write_simulation_mode(sim_on)
+            self._append_log("Panel", f"[{self._ts()}] SIMULATION_MODE set to {sim_on}\n")
+        except Exception as e:
+            self._append_log("Panel", f"[{self._ts()}] Failed to write SIMULATION_MODE: {e}\n")
+
         self._set_cmds_for_mode_and_driver()
         self._append_log("Panel", f"[{self._ts()}] Mode set to {self.mode}\n")
 

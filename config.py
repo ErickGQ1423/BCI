@@ -10,8 +10,7 @@
 
 WORKING_DIR = "/home/lab-admin/BCI_project/BCI"
 DATA_DIR = "/home/lab-admin/BCI_project/CurrentStudy"
-
-
+SIMULATION_MODE = True
 TRAINING_SUBJECT = "Prueba"
 # EEG Settings
 CAP_TYPE = 32  
@@ -29,7 +28,7 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 2  # Total number of trials
+TOTAL_TRIALS = 4  # Total number of trials
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
@@ -163,7 +162,7 @@ ROBOT_OPCODES = {
 # UDP Settings
 UDP_MARKER = {
     "IP": "127.0.0.1",
-    "PORT": 12345
+    "PORT": 15000
 }
 
 UDP_ROBOT = {
@@ -189,3 +188,4 @@ ARDUINO_BAUD = 9600         # Velocidad de tu sketch de Arduino
 # Mapeo de comandos según el clasificador
 ARDUINO_CMD_MI   = b"1"     # Detectó movimiento (label 200)
 ARDUINO_CMD_REST = b"0"     # Detectó reposo o ambiguo
+SIMULATION_MODE = True
