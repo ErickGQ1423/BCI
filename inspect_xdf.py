@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # === CONFIGURACIÓN ===
-file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P008/ses-S170/eeg/sub-P008_ses-S170_task-Default_run-001_eeg.xdf"
+file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf"
 
 # === CARGA DEL ARCHIVO ===
 streams, header = pyxdf.load_xdf(file_path)

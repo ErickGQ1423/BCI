@@ -118,5 +118,5 @@ if __name__ == "__main__":
     #    "/home/lab-admin/BCI_project/CurrentStudy/sub-Prueba/training_data/"
     #    "sub-CLASS_SUBJ_1032_ses-S001OFFLINE_FES_task-Default_run-001_eeg.xdf"
     #)
-    XDF_FILE = ("/home/lab-admin/Documents/CurrentStudy/sub-P009/ses-S180/eeg/sub-P009_ses-S180_task-Default_run-001_eeg.xdf")
+    XDF_FILE = ("/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf")
     plot_dual_trigger_series_aligned(XDF_FILE)

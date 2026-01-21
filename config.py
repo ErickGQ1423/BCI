@@ -28,13 +28,13 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 4  # Total number of trials
+TOTAL_TRIALS = 2  # Total number of trials
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
 TIME_MI = 5 # time for motor imagery and rest
-TIME_ROB = 7 # time allocated for robot to move
-TIME_STATIONARY = 2 # time for stationary feedback after no movement/failed movement trial
+TIME_ROB = 1 # time allocated for robot to move
+TIME_STATIONARY = 1 # time for stationary feedback after no movement/failed movement trial
 TIME_MASTER_MOVE = 5 # allowed timing for participant to position robot with master arm. Bimanual experiment.
 TIMING = True #obsolete
 SHAPE_MAX = 0.7 #maximum fill 
@@ -95,7 +95,7 @@ USE_PREVIOUS_ONLINE_STATS = False # for z-score normalization of data coming in 
 # Colors
 black = (0, 0, 0)
 white = (255, 255, 255)
-blue = (0, 0, 255)
+blue = (0, 120, 255)
 red = (255, 0, 0)
 green = (0, 255, 0)
 orange = (255, 165, 0)

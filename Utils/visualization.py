@@ -1,56 +1,84 @@
 import pygame
 import config
 
-
-def draw_time_balls(ball_state, screen_width, screen_height, ball_radius=60, mode="single"):
+def draw_time_balls(
+    ball_state,
+    screen_width,
+    screen_height,
+    ball_radius=None,
+    mode="single",
+    indicator_color=None,
+    single_pos=(0.50, 0.28),   # (x_ratio, y_ratio) for the single indicator
+    stack_pos=(0.12, 0.45),    # (x_ratio, y_ratio) for the top ball in the stack (left side)
+    stack_spacing_ratio=0.08   # vertical spacing between stacked balls (as ratio of screen height)
+):
     """
     Draw a time indicator ball with 4 possible states:
-    - 0 = Empty (Outlined Ball)
-    - 1 = White Ball (Baseline/Neutral)
-    - 2 = Red Ball (Motor Imagery)
-    - 3 = Blue Ball (Rest)
+      - 0 = Empty (Outlined Ball)
+      - 1 = White Ball (Baseline/Neutral)
+      - 2 = Red Ball (Motor Imagery)
+      - 3 = Blue Ball (Rest)
 
-    :param ball_state: The current state of the ball (0-3).
-    :param screen_width: Width of the screen.
-    :param screen_height: Height of the screen.
-    :param ball_radius: Radius of the ball(s).
-    :param mode: "single" (default) for one ball, "stack" for a three-ball countdown.
+    Key design choice:
+    - All geometry is defined using screen ratios so it stays consistent across resolutions/monitors.
+
+    Args:
+        ball_state (int): 0..3
+        screen_width (int): Current screen width in pixels
+        screen_height (int): Current screen height in pixels
+        ball_radius (int|None): If None, radius auto-scales with screen size
+        mode (str): "single" or "stack"
+        indicator_color (tuple|None): If provided, overrides the fill color of the single ball
+        single_pos (tuple): (x_ratio, y_ratio) anchor for single ball
+        stack_pos (tuple): (x_ratio, y_ratio) anchor for stacked balls (top ball)
+        stack_spacing_ratio (float): vertical spacing between stacked balls
     """
 
-    # Define ball colors based on state
+    # --- Auto-scale radius if not provided ---
+    # This keeps the ball visually consistent across 1080p/4K, etc.
+    if ball_radius is None:
+        ball_radius = int(min(screen_width, screen_height) * 0.035)  # ~3.5% of min dimension
+
+    # --- Define colors for each state ---
     color_map = {
         1: (255, 255, 255),  # White (Baseline)
-        2: (255, 0, 0),  # Red (MI)
-        3: (0, 0, 255)  # Blue (Rest)
+        2: (255, 0, 0),      # Red (MI)
+        3: (0, 120, 255)     # Blue (Rest) - slightly nicer blue than pure (0,0,255)
     }
-    
-    ball_color = color_map.get(ball_state, (255, 255, 255))  # Default to white
+
+    # Default color from state
+    ball_color = color_map.get(ball_state, (255, 255, 255))
+
+    # If user wants a custom indicator (e.g. MI/REST preview), override only for FILLED ball
+    if indicator_color is not None and ball_state != 0:
+        ball_color = indicator_color
+
+    surf = pygame.display.get_surface()
 
     if mode == "single":
-        # Single ball centered horizontally, positioned below the fixation cross
-        ball_x = screen_width // 2
-        ball_y = screen_height // 2 - ball_radius * 4  # Position below fixation cross
+        # --- Single ball anchored by screen ratios ---
+        ball_x = int(screen_width * single_pos[0])
+        ball_y = int(screen_height * single_pos[1])
 
         if ball_state == 0:
-            # Draw an outlined ball (empty state)
-            pygame.draw.circle(pygame.display.get_surface(), (255, 255, 255), (ball_x, ball_y), ball_radius, 2)
+            # Outlined ball (empty)
+            pygame.draw.circle(surf, (255, 255, 255), (ball_x, ball_y), ball_radius, 2)
         else:
-            # Draw a filled ball
-            pygame.draw.circle(pygame.display.get_surface(), ball_color, (ball_x, ball_y), ball_radius)
+            # Filled ball
+            pygame.draw.circle(surf, ball_color, (ball_x, ball_y), ball_radius)
 
     elif mode == "stack":
-        # Three vertically stacked balls for countdown
-        stack_x = screen_width // 2 - ball_radius * 14  # Positioned to the left
-        stack_y_start = screen_height // 2 - ball_radius * 2  # Center vertically
-        spacing = ball_radius * 3  # Space between balls
+        # --- Three stacked balls for countdown (anchored by ratios) ---
+        stack_x = int(screen_width * stack_pos[0])
+        stack_y_start = int(screen_height * stack_pos[1])
+        spacing = int(screen_height * stack_spacing_ratio)
 
         for i in range(3):
             ball_y = stack_y_start + i * spacing
             if ball_state == 0:
-                pygame.draw.circle(pygame.display.get_surface(), (255, 255, 255), (stack_x, ball_y), ball_radius, 2)
+                pygame.draw.circle(surf, (255, 255, 255), (stack_x, ball_y), ball_radius, 2)
             else:
-                pygame.draw.circle(pygame.display.get_surface(), ball_color, (stack_x, ball_y), ball_radius)
-
+                pygame.draw.circle(surf, ball_color, (stack_x, ball_y), ball_radius)
 
 def draw_arrow_fill(progress, screen_width, screen_height, show_threshold=True):
     ball_radius = 200  # Base measurement
@@ -111,7 +139,7 @@ def draw_ball_fill(progress, screen_width, screen_height, show_threshold=True):
     water_surface = pygame.Surface((ball_radius * 2, ball_radius * 2), pygame.SRCALPHA)
     fill_height = int(progress * ball_radius * 2)
     water_rect = pygame.Rect(0, ball_radius * 2 - fill_height, ball_radius * 2, fill_height)
-    pygame.draw.rect(water_surface, (0, 0, 255, 180), water_rect)
+    pygame.draw.rect(water_surface, (0, 120, 255, 180), water_rect)
     mask_surface = pygame.Surface((ball_radius * 2, ball_radius * 2), pygame.SRCALPHA)
     pygame.draw.circle(mask_surface, (255, 255, 255, 255), (ball_radius, ball_radius), ball_radius)
     water_surface.blit(mask_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
@@ -128,7 +156,7 @@ def draw_ball_fill(progress, screen_width, screen_height, show_threshold=True):
 
         for i in range(0, ball_radius * 2, 10):
             pygame.draw.line(
-                pygame.display.get_surface(), (0, 0, 255), 
+                pygame.display.get_surface(), (0, 120, 255), 
                 (ball_x - ball_radius + i, threshold_y), 
                 (ball_x - ball_radius + i + 5, threshold_y), 2)
 
