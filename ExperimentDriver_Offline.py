@@ -5,332 +5,250 @@ import pygame
 import socket
 import sys
 import time
+import random
+import os
+from pathlib import Path
+from pylsl import StreamInlet, resolve_stream
+
+# Personal modules
 from Utils.visualization import draw_arrow_fill, draw_ball_fill, draw_fixation_cross, draw_time_balls
 from Utils.experiment_utils import generate_trial_sequence
 from Utils.networking import send_udp_message, display_multiple_messages_with_udp
 import config
-from pylsl import StreamInlet, resolve_stream
-from pathlib import Path
 from Utils.logging_manager import LoggerManager
-import random
-import os
-
 
 # ============================================================
-# CONFIG: Next-trial indicator placement (resolution independent)
-# Move Y_RATIO down to move indicator DOWN. Up to move UP.
+# CONFIG
 # ============================================================
-NEXT_INDICATOR_POS = (0.50, 0.28)   # (x_ratio, y_ratio)
-NEXT_INDICATOR_SCALE = 1.00        # 1.0 = default size from draw_time_balls auto-scale
+NEXT_INDICATOR_POS = (0.50, 0.28)
+NEXT_INDICATOR_SCALE = 1.00
 
-
-# Initialize UDP sockets
+# UDP Sockets
 udp_socket_marker = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket_robot = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 fes_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 FES_toggle = config.FES_toggle
 
-# Auto-detect active recording (or fallback if none)
+# Logging
 logger = LoggerManager.auto_detect_from_subject(
     subject=config.TRAINING_SUBJECT,
     base_path=Path(config.DATA_DIR)
 )
 
-# Log config snapshot
-loggable_fields = [
-    "UDP_MARKER", "UDP_ROBOT", "UDP_FES",
-    "ARM_SIDE", "TOTAL_TRIALS", "MAX_REPEATS",
-    "TIME_MI", "TIME_ROB", "TIME_STATIONARY",
-    "SHAPE_MAX", "SHAPE_MIN", "ROBOT_TRAJECTORY",
-    "FES_toggle", "FES_CHANNEL", "FES_TIMING_OFFSET",
-    "WORKING_DIR", "DATA_DIR", "MODEL_PATH",
-    "DATA_FILE_PATH", "TRAINING_SUBJECT"
-]
-config_log_subset = {key: getattr(config, key) for key in loggable_fields if hasattr(config, key)}
+# Config snapshot
+loggable_fields = ["UDP_MARKER", "UDP_ROBOT", "UDP_FES", "ARM_SIDE", "TOTAL_TRIALS", "TIME_MI", "FES_toggle"]
+config_log_subset = {k: getattr(config, k) for k in loggable_fields if hasattr(config, k)}
 logger.save_config_snapshot(config_log_subset)
-
-logger.log_event("Initialized offline EEG processing pipeline.")
 
 pygame.init()
 
 if config.BIG_BROTHER_MODE:
-    # External display at +0+0 (HDMI-1), force window origin (0,0)
     os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
-    # Use desktop resolution for the HDMI screen if you want borderless fullscreen feel
-    screen = pygame.display.set_mode((1920, 1080), pygame.NOFRAME)
-    logger.log_event("🎥 Big Brother Mode ON — window placed at (0,0) on external monitor (HDMI-1).")
+    screen = pygame.display.set_mode((3840, 2160), pygame.NOFRAME)
 else:
     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    logger.log_event("👤 Big Brother Mode OFF — fullscreen on active display.")
 
-pygame.display.set_caption("EEG Offline Interactive Loop")
-info = pygame.display.Info()
-screen_width = info.current_w
-screen_height = info.current_h
+screen_width, screen_height = pygame.display.Info().current_w, pygame.display.Info().current_h
 
+# ============================================================
+# VISUAL FUNCTIONS
+# ============================================================
+
+def draw_arrow_directional(screen, pos_x, pos_y, size, color, direction="right"):
+    """
+    Draws a complete arrow (line + triangle tip) with offset correction.
+    The line end is adjusted to stay behind the triangle's tip.
+    """
+    # 1. Geometry Setup
+    line_len = size * 0.8
+    tri_size = size // 2
+    
+    # OFFSET CORRECTION: Move the line end point slightly 'inwards' 
+    # so it doesn't poke out of the triangle's tip.
+    offset = 5  # pixels
+    
+    if direction == "right":
+        line_start = (pos_x - line_len, pos_y)
+        line_end = (pos_x + line_len - offset, pos_y) # Pulled back
+        
+        # Tip points (Right)
+        points = [
+            (pos_x + line_len, pos_y),                  # Tip
+            (pos_x + line_len - tri_size, pos_y - tri_size), # Top back
+            (pos_x + line_len - tri_size, pos_y + tri_size)  # Bottom back
+        ]
+    else:
+        line_start = (pos_x + line_len, pos_y)
+        line_end = (pos_x - line_len + offset, pos_y) # Pulled back
+        
+        # Tip points (Left)
+        points = [
+            (pos_x - line_len, pos_y),                  # Tip
+            (pos_x - line_len + tri_size, pos_y - tri_size), # Top back
+            (pos_x - line_len + tri_size, pos_y + tri_size)  # Bottom back
+        ]
+
+    # 2. Draw Body (Line)
+    pygame.draw.line(screen, color, line_start, line_end, 12)
+
+    # 3. Draw Tip (Triangle)
+    pygame.draw.polygon(screen, color, points)
 
 def display_fixation_period(duration=3):
-    """Displays fixation cross for a given duration (seconds)."""
-    logger.log_event(f"Fixation period started for {duration} seconds.")
     start_time = time.time()
     clock = pygame.time.Clock()
-
     while time.time() - start_time < duration:
         pygame.display.get_surface().fill(config.black)
-
         draw_fixation_cross(screen_width, screen_height)
         draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
         draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
-
-        # Keep baseline indicator
-        draw_time_balls(
-            0, screen_width, screen_height,
-            mode="single",
-            single_pos=NEXT_INDICATOR_POS
-        )
-
+        draw_time_balls(0, screen_width, screen_height, mode="single", single_pos=NEXT_INDICATOR_POS)
         pygame.display.flip()
-
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                logger.log_event("Fixation interrupted — experiment manually terminated.")
-                return
-
+            if event.type == pygame.QUIT: pygame.quit(); sys.exit()
         clock.tick(60)
 
-    logger.log_event("Fixation period complete.")
-
-
 def draw_pretrial_screen(next_color, time_ball_state):
-    """
-    Draws the pre-trial screen with a next-trial indicator.
-    This version does NOT overlay a separate circle; it delegates positioning to draw_time_balls().
-    """
+    """Pre-trial with Line+Triangle arrow."""
     screen.fill(config.black)
     draw_fixation_cross(screen_width, screen_height)
-    draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
-    draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
+    
+    pos_x = int(screen_width * NEXT_INDICATOR_POS[0])
+    pos_y = int(screen_height * NEXT_INDICATOR_POS[1])
+    base_size = int(min(screen_width, screen_height) * 0.08 * NEXT_INDICATOR_SCALE)
+    
+    is_mi = (next_color == (255, 50, 50) or next_color == getattr(config, 'red', (255, 50, 50)))
 
-    # Draw the single indicator ball using the same anchor every time
-    # indicator_color paints it MI/REST without needing an overlay.
-    draw_time_balls(
-        time_ball_state,
-        screen_width,
-        screen_height,
-        mode="single",
-        indicator_color=next_color,
-        single_pos=NEXT_INDICATOR_POS,
-        ball_radius=int(min(screen_width, screen_height) * 0.035 * NEXT_INDICATOR_SCALE)
-    )
+    # 1. Outer Background (White)
+    if is_mi:
+        bg_rect = pygame.Rect(pos_x - base_size//2, pos_y - base_size//2, base_size, base_size)
+        pygame.draw.rect(screen, (255, 50, 50), bg_rect)
+    else:
+        pygame.draw.circle(screen, (0, 120, 255), (pos_x, pos_y), base_size // 2)
 
+    # 2. Middle Color
+    draw_time_balls(time_ball_state, screen_width, screen_height, mode="single", 
+                    indicator_color=next_color, single_pos=NEXT_INDICATOR_POS, ball_radius=int(base_size * 0.4))
+    
+    # ============================================================
+    # AGREGAR TEXTO AQUÍ (NUEVA SECCIÓN)
+    # ============================================================
+    font_prep = pygame.font.SysFont(None, 72) # Tamaño un poco menor que el feedback para diferenciar
+    if is_mi:
+        prep_msg = f"Prepare: Flex {config.ARM_SIDE.upper()} Hand"
+    else:
+        prep_msg = "Prepare: Rest"
+    
+    txt_surface = font_prep.render(prep_msg, True, config.white)
+    # Lo posicionamos en la misma coordenada X que el indicador, pero más abajo (ajusta +400 según necesites)
+    screen.blit(txt_surface, (screen_width // 2 - txt_surface.get_width() // 2, screen_height // 2 + 300))
+    # ============================================================
+
+    # 3. Directional Arrow (Line + Triangle)
+    arrow_dir = "right" if is_mi else "left"
+    draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), direction=arrow_dir)
+    
     pygame.display.flip()
 
-
-def show_feedback(duration=5, mode=0):
-    """Displays feedback animation for the specified duration."""
-    logger.log_event(f"Feedback display started — Mode: {'MI' if mode == 0 else 'REST'}, Duration: {duration}s")
+def show_feedback(duration, mode):
+    """Feedback phase keeping the arrow for continuity."""
     start_time = time.time()
+    pos_x, pos_y = int(screen_width * NEXT_INDICATOR_POS[0]), int(screen_height * NEXT_INDICATOR_POS[1])
+    base_size = int(min(screen_width, screen_height) * 0.08 * NEXT_INDICATOR_SCALE)
 
     while time.time() - start_time < duration:
-        elapsed_time = time.time() - start_time
-        progress = elapsed_time / duration
-
+        progress = (time.time() - start_time) / duration
         screen.fill(config.black)
-        if mode == 0:
-            draw_arrow_fill(progress, screen_width, screen_height, show_threshold=False)
-            draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
-            draw_fixation_cross(screen_width, screen_height)
+        draw_fixation_cross(screen_width, screen_height)
 
-            # During MI, show MI color ball (red)
-            draw_time_balls(2, screen_width, screen_height, mode="single", single_pos=NEXT_INDICATOR_POS)
+        if mode == 0: # MI
+            draw_arrow_fill(progress, screen_width, screen_height, False)
+            # Maintain Visual Identity (Square)
+            bg_rect = pygame.Rect(pos_x - base_size//2, pos_y - base_size//2, base_size, base_size)
+            pygame.draw.rect(screen, (255, 50, 50), bg_rect)
+            pygame.draw.rect(screen, (255, 50, 50), pygame.Rect(pos_x - int(base_size*0.35), 
+                             pos_y - int(base_size*0.35), int(base_size*0.7), int(base_size*0.7)))
+            # Keep Arrow
+            draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), "right")
+            msg = f"Flex {config.ARM_SIDE.upper()} Hand"
+        else: # REST
+            draw_ball_fill(progress, screen_width, screen_height, False)
+            # Maintain Visual Identity (Circle)
+            pygame.draw.circle(screen, (0, 120, 255), (pos_x, pos_y), base_size // 2)
+            pygame.draw.circle(screen, (0, 120, 255), (pos_x, pos_y), int(base_size * 0.35))
+            # Keep Arrow
+            draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), "left")
+            msg = "Rest"
 
-            message = pygame.font.SysFont(None, 96).render(f"Flex {config.ARM_SIDE.upper()} Hand", True, config.white)
-        else:
-            draw_ball_fill(progress, screen_width, screen_height, show_threshold=False)
-            draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
-            draw_fixation_cross(screen_width, screen_height)
-
-            # During REST, show REST color ball (blue)
-            draw_time_balls(3, screen_width, screen_height, mode="single", single_pos=NEXT_INDICATOR_POS)
-
-            message = pygame.font.SysFont(None, 96).render("Rest", True, config.white)
-
-        screen.blit(
-            message,
-            (screen_width // 2 - message.get_width() // 2,
-             screen_height // 2 - message.get_height() // 2 + 300)
-        )
-
+        txt = pygame.font.SysFont(None, 96).render(msg, True, config.white)
+        screen.blit(txt, (screen_width//2 - txt.get_width()//2, screen_height//2 + 300))
         pygame.display.flip()
-
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                logger.log_event("Feedback interrupted — experiment manually terminated.")
-                return False
-
-    logger.log_event("Feedback display complete.")
+            if event.type == pygame.QUIT: return False
     return True
 
-
 # ============================================================
-# Main Game Loop
+# MAIN LOOP
 # ============================================================
-logger.log_event("Attempting to resolve EEG stream...")
+logger.log_event("Resolving EEG stream...")
 streams = resolve_stream('type', 'EEG')
 inlet = StreamInlet(streams[0])
-logger.log_event("EEG data stream detected. Starting experiment...")
 
 trial_sequence = generate_trial_sequence(config.TOTAL_TRIALS, config.MAX_REPEATS)
-logger.log_event(f"Trial Sequence: {trial_sequence}")
-mode_labels = ["MI" if t == 0 else "REST" for t in trial_sequence]
-logger.log_event(f"Trial Sequence (labeled): {mode_labels}")
-
 current_trial = 0
-running = True
 clock = pygame.time.Clock()
 
 display_fixation_period(duration=3)
 
 try:
-    while running and current_trial < len(trial_sequence):
+    while current_trial < len(trial_sequence):
+        next_mode = trial_sequence[current_trial]
+        next_color = (255, 50, 50) if next_mode == 0 else (0, 120, 255)
 
-        # === (A) NEXT TRIAL INDICATOR (programmed) ===
-        next_mode = trial_sequence[current_trial]  # 0=MI, 1=REST
-        next_color = (255, 0, 0) if next_mode == 0 else (0, 120, 255)
-
-        # === (B) PRE-TRIAL SCREEN (initial frame) ===
+        # PRE-TRIAL
         draw_pretrial_screen(next_color, time_ball_state=1)
-
-        backdoor_mode = None
-        waiting_for_press = True
-        countdown_start = None
-        countdown_duration = 1500  # ms
-
-        while waiting_for_press:
+        
+        backdoor_mode, waiting = None, True
+        countdown_start = pygame.time.get_ticks()
+        while waiting:
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                    waiting_for_press = False
-
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_RIGHT:
-                        backdoor_mode = 0  # MI
-                    elif event.key == pygame.K_DOWN:
-                        backdoor_mode = 1  # REST
-                    waiting_for_press = False
-
-            if config.TIMING:
-                if countdown_start is None:
-                    countdown_start = pygame.time.get_ticks()
-
-                elapsed_time = pygame.time.get_ticks() - countdown_start
-
-                # Redraw during countdown to keep the indicator visible
-                draw_pretrial_screen(next_color, time_ball_state=1)
-
-                if elapsed_time >= countdown_duration:
-                    logger.log_event("Timing mode: Countdown expired, proceeding automatically.")
-                    waiting_for_press = False
-
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_RIGHT: backdoor_mode = 0; waiting = False
+                    if event.key == pygame.K_DOWN: backdoor_mode = 1; waiting = False
+            if config.TIMING and (pygame.time.get_ticks() - countdown_start >= 1500):
+                waiting = False
+            draw_pretrial_screen(next_color, time_ball_state=1)
             clock.tick(60)
 
-        if not running:
-            break
+        mode = backdoor_mode if backdoor_mode is not None else next_mode
 
-        # === Determine actual mode ===
-        # If backdoor is used, it overrides the programmed trial for THIS iteration.
-        if backdoor_mode is not None:
-            mode = backdoor_mode
-            logger.log_event(f"Backdoor override used: {'MI' if mode == 0 else 'REST'}")
-        else:
-            mode = trial_sequence[current_trial]
+        # EXECUTION
+        trig = config.TRIGGERS["MI_BEGIN"] if mode == 0 else config.TRIGGERS["REST_BEGIN"]
+        send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], trig, logger)
+        if mode == 0 and FES_toggle: send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_SENS_GO", logger)
 
-        logger.log_event(f"Starting trial {current_trial+1}/{len(trial_sequence)} — Mode: {'MI' if mode == 0 else 'REST'}")
+        if not show_feedback(config.TIME_MI, mode): break
 
-        # === Triggers ===
-        if mode == 0:
-            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["MI_BEGIN"], logger=logger)
-            logger.log_event("Sent MI_BEGIN trigger.")
-
-            if FES_toggle == 1:
-                send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_SENS_GO", logger=logger)
-                logger.log_event("FES sensory stimulation sent.")
-        else:
-            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["REST_BEGIN"], logger=logger)
-            logger.log_event("Sent REST_BEGIN trigger.")
-
-        # === Feedback ===
-        if not show_feedback(duration=config.TIME_MI, mode=mode):
-            break
-
-        # === Post-feedback ===
-        if mode == 0:
-            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["MI_END"], logger=logger)
-            logger.log_event("Sent MI_END trigger.")
-
-            messages = [" "]
-            selected_trajectory = random.choice(config.ROBOT_TRAJECTORY)
-            udp_messages = [selected_trajectory, "g"]
-            colors = [config.green]
-            duration = config.TIME_ROB
-
-            if FES_toggle == 1:
-                send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_MOTOR_GO", logger=logger)
-                logger.log_event("FES motor stimulation sent.")
-
-            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_BEGIN"], logger=logger)
-            logger.log_event(f"Sent ROBOT_BEGIN trigger with trajectory: {selected_trajectory}")
-
-        else:
-            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["REST_END"], logger=logger)
-            logger.log_event("Sent REST_END trigger.")
-
-            messages = [" "]
-            udp_messages = None
-            colors = [config.white]
-            duration = config.TIME_STATIONARY
-
-        display_multiple_messages_with_udp(
-            messages=messages,
-            colors=colors,
-            offsets=[0],
-            duration=duration,
-            udp_messages=udp_messages,
-            udp_socket=udp_socket_robot,
-            udp_ip=config.UDP_ROBOT["IP"],
-            udp_port=config.UDP_ROBOT["PORT"],
-            logger=logger
-        )
+        # END TRIAL / ROBOT
+        end_trig = config.TRIGGERS["MI_END"] if mode == 0 else config.TRIGGERS["REST_END"]
+        send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], end_trig, logger)
 
         if mode == 0:
-            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_END"], logger=logger)
-            logger.log_event("Sent ROBOT_END trigger.")
+            sel_traj = random.choice(config.ROBOT_TRAJECTORY)
+            if FES_toggle: send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_MOTOR_GO", logger)
+            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_BEGIN"], logger)
+            display_multiple_messages_with_udp([" "], [config.green], [0], config.TIME_ROB, [sel_traj, "g"], udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger)
+            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_END"], logger)
+            display_fixation_period(2)
+            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_HOME"], logger)
+            send_udp_message(udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], config.ROBOT_OPCODES["HOME"], logger, expect_ack=True)
+        else:
+            display_multiple_messages_with_udp([" "], [config.white], [0], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger)
 
-            display_fixation_period(duration=2)
-
-            send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_HOME"], logger=logger)
-
-            send_udp_message(
-                udp_socket_robot,
-                config.UDP_ROBOT["IP"],
-                config.UDP_ROBOT["PORT"],
-                config.ROBOT_OPCODES["HOME"],
-                logger=logger,
-                expect_ack=True,
-                ack_timeout=1.0,
-                max_retries=1
-            )
-
-        display_fixation_period(duration=3)
+        display_fixation_period(3)
         current_trial += 1
-        clock.tick(60)
 
 finally:
     pygame.quit()
-    udp_socket_marker.close()
-    udp_socket_robot.close()
-    fes_socket.close()
-    logger.log_event("Experiment terminated (cleanup complete).")
+    [s.close() for s in [udp_socket_marker, udp_socket_robot, fes_socket]]
