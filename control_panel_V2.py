@@ -22,7 +22,7 @@ import os, sys, shlex, time, re, tempfile, shutil, socket, subprocess, pathlib
 import serial           # Library to connect with ARDUINO
 import serial.tools.list_ports 
 
-# Intentamos importar ARDUINO_PORT de config, si falla usamos default
+# Import ARDUINO_PORT from config; fallback to default if unavailable
 try:
     from config import ARDUINO_PORT
 except ImportError:
@@ -680,8 +680,8 @@ class ControlPanel(QMainWindow):
 
     def _send_arduino_manual_value(self, value: str):
         """
-        Envía '1' o '0' manualmente.
-        INCLUYE PROTECCIÓN CONTRA RESET (sleep 2s).
+        Manually transmits '1' or '0'.
+        Includes reset protection via a 2-second delay.
         """
         port = self.serial_port_name or self.cmb_serial_port.currentData()
         if not port:
@@ -697,13 +697,13 @@ class ControlPanel(QMainWindow):
             return
 
         try:
-            # Abrir conexión
+            # Open connection
             ser = serial.Serial(port, baudrate=baud, timeout=1)
             
-            # --- PROTECCIÓN CRÍTICA ---
-            # Esperar a que el Arduino termine de reiniciarse tras abrir el puerto
+            # Wait until the Arduino completes its reset after the port is opened
             self._append_log("Panel", f"[{self._ts()}] Waiting for Arduino reset (2s)...\n")
-            # Forzamos repintado de la GUI para que no parezca colgada
+            
+            # Force GUI redraw to prevent it from appearing unresponsive
             QApplication.processEvents() 
             time.sleep(2)
             # --------------------------

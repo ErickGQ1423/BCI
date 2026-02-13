@@ -182,12 +182,14 @@ UDP_CONTROL_BIND = {
     "PORT": 8080
 }
 
-# === Arduino actuator ===
-USE_ARDUINO = True          # Actívalo o apágalo
-ARDUINO_PORT  = "/dev/ttyACM0"       # Windows → COMn / Mac 5"       # Windows → COMn → /dev/cu.usbmodemXXX
-ARDUINO_BAUD = 9600         # Velocidad de tu sketch de Arduino
 
-# Mapeo de comandos según el clasificador
-ARDUINO_CMD_MI   = b"1"     # Detectó movimiento (label 200)
-ARDUINO_CMD_REST = b"0"     # Detectó reposo o ambiguo
-SIMULATION_MODE = True
+# === Arduino actuator ===
+USE_ARDUINO = True          # Enable or disable Arduino actuator
+ARDUINO_PORT = "/dev/ttyACM0"  # Windows: COMn / macOS: /dev/cu.usbmodemXXX
+ARDUINO_BAUD = 9600         # Arduino communication baud rate
+
+# Command mapping based on classifier output
+ARDUINO_CMD_MI   = b"1"     # Movement detected (label 200)
+ARDUINO_CMD_REST = b"0"     # Rest or ambiguous state detected
+
+SIMULATION_MODE = True      # Run system in simulation mode
