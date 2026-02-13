@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Harmony_Bimanual — Control Panel (Simplified, no polling)
-Requires: pip install PySide6 psutil
+Requires: pip install PySide6 psutil pyserial
 
 Repo layout assumed:
 ~/Projects/Harmony_Bimanual/
@@ -19,10 +19,14 @@ Repo layout assumed:
 """
 
 import os, sys, shlex, time, re, tempfile, shutil, socket, subprocess, pathlib
-import serial           # This library was included to connect with the ARDUINO by serial port 
-import serial.tools.list_ports # This library was included to connect with the ARDUINO by serial port 
+import serial           # Library to connect with ARDUINO
+import serial.tools.list_ports 
 
-from config import ARDUINO_PORT
+# Intentamos importar ARDUINO_PORT de config, si falla usamos default
+try:
+    from config import ARDUINO_PORT
+except ImportError:
+    ARDUINO_PORT = ""
 
 from dataclasses import dataclass, field
 from typing import Optional, Dict
@@ -33,11 +37,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QCheckBox, QGridLayout, QLineEdit,
     QTextEdit, QGroupBox, QFormLayout, QMessageBox, QSplitter, QToolBar, QStyle, 
-    QFileDialog,   # <-- NUEVO
+    QFileDialog
 )
 
 # ----------------- Paths & constants -----------------
-# ROOT = os.path.expanduser("~/Projects/Harmony")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PY = os.path.join(ROOT, "config.py")
 
@@ -65,10 +68,7 @@ DRIVERS = [
 # ----------------- Config read/write helpers -----------------
 SUBJECT_RE = re.compile(r'^(TRAINING_SUBJECT\s*=\s*)([\'"])([^\'"]+)\2\s*$', re.M)
 FES_RE     = re.compile(r'^(FES_toggle\s*=\s*)([01])\s*$', re.M)
-
-
-
-SIM_RE = re.compile(r'^(SIMULATION_MODE\s*=\s*)(True|False)(\s*(#.*)?)\s*$', re.M)
+SIM_RE     = re.compile(r'^(SIMULATION_MODE\s*=\s*)(True|False)(\s*(#.*)?)\s*$', re.M)
 
 def read_simulation_mode(default=False) -> bool:
     txt = read_text(CONFIG_PY)
@@ -87,7 +87,6 @@ def write_simulation_mode(val: bool):
         new = txt + f"{sep}SIMULATION_MODE = {val_txt}\n"
     write_atomic(CONFIG_PY, new)
 
-
 def read_text(path: str) -> str:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -100,7 +99,6 @@ def write_atomic(path: str, text: str):
     try:
         tmp.write(text)
         tmp.flush(); os.fsync(tmp.fileno()); tmp.close()
-        # No backup copy
         os.replace(tmp.name, path)
     except Exception:
         try: os.unlink(tmp.name)
@@ -115,7 +113,6 @@ def read_training_subject(default="PILOT007"):
 def write_training_subject(val: str):
     txt = read_text(CONFIG_PY)
     if SUBJECT_RE.search(txt):
-        # Use \g<1> to avoid \11 ambiguity
         new = SUBJECT_RE.sub(rf'\g<1>"{val}"', txt)
     else:
         sep = "" if (txt.endswith("\n") or txt == "") else "\n"
@@ -134,7 +131,6 @@ def write_fes_toggle(val: int):
     val = 1 if val else 0
     txt = read_text(CONFIG_PY)
     if FES_RE.search(txt):
-        # Use \g<1> to avoid \11 ambiguity when val==1
         new = FES_RE.sub(rf'\g<1>{val}', txt)
     else:
         sep = "" if (txt.endswith("\n") or txt == "") else "\n"
@@ -175,14 +171,11 @@ class ControlPanel(QMainWindow):
 
         # State
         self.mode = MODES[0]
-        # Prefer config-driven initial mode
         try:
             sim_cfg = read_simulation_mode(default=False)
         except Exception:
             sim_cfg = False
         self.mode = "Simulation" if sim_cfg else MODES[0]
-
-
 
         self.driver_choice = DRIVERS[0]
         self.training_subject = read_training_subject()
@@ -196,12 +189,11 @@ class ControlPanel(QMainWindow):
 
         # Procs (QProcess-managed)
         self.marker = Proc("Marker Stream", f'python -u "{MARKER_PY}"', ROOT)
-        self.driver = Proc("Experimental Driver", None, ROOT)  # set by driver_choice+mode
+        self.driver = Proc("Experimental Driver", None, ROOT) 
         self.fes    = Proc("FES Listener", f'python -u "{FES_PY}"', ROOT)
 
-        # Robot terminal (we only track the terminal, not remote PIDs)
+        # Robot terminal 
         self.robot_term: Optional[QProcess] = None
-
         self.labrec_term: Optional[QProcess] = None
         self.eego_term: Optional[QProcess] = None
 
@@ -209,20 +201,20 @@ class ControlPanel(QMainWindow):
         self._log_buffers: Dict[str, str] = {"Marker": "", "FES": "", "Driver": "", "Robot": "", "Panel": ""}
         self._current_log_target = "Panel"
 
-        # Build UI (buttons/labels defined here)
+        # Build UI
         self._build_ui()
 
         # Configure initial commands
         self._set_cmds_for_mode_and_driver()
 
-        # Initialize LEDs based on preferences (no polling)
+        # Initialize LEDs
         self._set_led(self.lbl_robot_init, "stopped")
         self._set_led(self.lbl_robot, "stopped")
         self._set_led(self.lbl_marker, "stopped")
         self._set_led(self.lbl_fes, "stopped")
         self._set_led(self.lbl_driver, "stopped")
         self._set_led(self.lbl_eego, "stopped")
-        # Cheap timer: keep LEDs for QProcess-managed procs in sync
+        
         self.ui_timer = QTimer(self)
         self.ui_timer.setInterval(400)
         self.ui_timer.timeout.connect(self._tick)
@@ -278,7 +270,7 @@ class ControlPanel(QMainWindow):
         fs.addWidget(self.cmb_subject, 1); fs.addWidget(btn_save_subj); fs.addWidget(btn_copy_subj)
         top.addWidget(gb_subj, 2)
 
-        # FES toggle + config button
+        # FES toggle 
         gb_fes = QGroupBox("FES"); ff = QHBoxLayout(gb_fes)
         self.chk_fes = QCheckBox("Enable")
         self.chk_fes.setChecked(bool(self.fes_enabled_pref))
@@ -318,8 +310,6 @@ class ControlPanel(QMainWindow):
         btn_eego.clicked.connect(self.on_open_eego)
         grid.addWidget(btn_eego, row, 2)
         row += 1
-
-
 
         # ===== Marker =====
         self.lbl_marker = QLabel("●"); self._set_led(self.lbl_marker, "stopped")
@@ -364,17 +354,13 @@ class ControlPanel(QMainWindow):
         self.lbl_robot = QLabel("●"); self._set_led(self.lbl_robot, "stopped")
         grid.addWidget(QLabel("<b>Robot</b>"), row, 0)
         grid.addWidget(self.lbl_robot, row, 1)
-
         self.btn_robot_start = QPushButton("Start (SSH terminal)")
         self.btn_robot_removeovr = QPushButton("Remove Overrides")
-
         self.btn_robot_start.clicked.connect(self.on_robot_start)
         self.btn_robot_removeovr.clicked.connect(self.on_robot_remove_overrides)
-
         grid.addWidget(self.btn_robot_start, row, 2)
         grid.addWidget(self.btn_robot_removeovr, row, 3)
         row += 1
-
 
         # ===== Driver =====
         self.lbl_driver = QLabel("●"); self._set_led(self.lbl_driver, "stopped")
@@ -388,7 +374,6 @@ class ControlPanel(QMainWindow):
         grid.addWidget(self.btn_driver_stop, row, 3)
         row += 1
 
-        # External apps info
         grid.addWidget(QLabel("<i>External Apps:</i> eegoSports, LabRecorder (use Initialize / buttons)"), row, 0, 1, 5)
         row += 1
 
@@ -396,7 +381,6 @@ class ControlPanel(QMainWindow):
         arduino_group = QGroupBox("Arduino / Online BCI")
         ag_layout = QGridLayout(arduino_group)
 
-        # Fila 0: Serial port + Refresh
         ag_layout.addWidget(QLabel("Serial port:"), 0, 0)
         self.cmb_serial_port = QComboBox()
         ag_layout.addWidget(self.cmb_serial_port, 0, 1)
@@ -404,26 +388,22 @@ class ControlPanel(QMainWindow):
         self.btn_serial_refresh.clicked.connect(self.on_serial_refresh)
         ag_layout.addWidget(self.btn_serial_refresh, 0, 2)
 
-        # Fila 1: Baudrate
         ag_layout.addWidget(QLabel("Baudrate:"), 1, 0)
         self.le_serial_baud = QLineEdit(self.serial_baudrate)
         ag_layout.addWidget(self.le_serial_baud, 1, 1)
         self.le_serial_baud.editingFinished.connect(self.on_serial_baud_changed)
 
-        # Fila 2: Test connection + status
         self.btn_serial_test = QPushButton("Test connection")
         self.btn_serial_test.clicked.connect(self.on_serial_test)
         ag_layout.addWidget(self.btn_serial_test, 2, 0)
         self.lbl_serial_status = QLabel("Status: Not tested")
         ag_layout.addWidget(self.lbl_serial_status, 2, 1, 1, 2)
 
-        # Fila 3: Enable Arduino control
         self.chk_enable_arduino = QCheckBox("Enable Arduino control")
         self.chk_enable_arduino.setChecked(self.arduino_enabled)
         self.chk_enable_arduino.toggled.connect(self.on_arduino_toggled)
         ag_layout.addWidget(self.chk_enable_arduino, 3, 0, 1, 3)
 
-        # Fila 4: Classifier .pkl
         ag_layout.addWidget(QLabel("Classifier model (.pkl):"), 4, 0)
         self.le_model_path = QLineEdit(self.classifier_model_path)
         self.le_model_path.setReadOnly(True)
@@ -432,7 +412,7 @@ class ControlPanel(QMainWindow):
         self.btn_browse_model.clicked.connect(self.on_browse_model)
         ag_layout.addWidget(self.btn_browse_model, 4, 2)
 
-        # Fila 5: Manual test (Send 1 / Send 0)
+        # MANUAL TEST BUTTONS
         ag_layout.addWidget(QLabel("Manual test:"), 5, 0)
         self.btn_send_1 = QPushButton("Send '1' (close exo)")
         self.btn_send_1.clicked.connect(self.on_send_arduino_one)
@@ -472,13 +452,12 @@ class ControlPanel(QMainWindow):
         self.txt_udp_log = QTextEdit(); self.txt_udp_log.setReadOnly(True); self.txt_udp_log.setMaximumHeight(180)
         rt.addWidget(QLabel("Notes:")); rt.addWidget(self.txt_udp_log)
 
-        # 🔌 Inicializamos la lista de puertos serie al arrancar
+        # Initial serial refresh
         self.on_serial_refresh()
 
         self._building_ui = False
         self._refresh_log_view()
 
-        # Disable Robot start in Simulation
         self._update_robot_buttons_for_mode()
 
     # ---------- LED helper ----------
@@ -494,7 +473,6 @@ class ControlPanel(QMainWindow):
 
     # ---------- Command wiring ----------
     def _set_cmds_for_mode_and_driver(self):
-        # Driver (local python) based on driver_choice and mode
         mode_flag = {
             "MI_Bimanual": "--mode mi_bimanual",
             "Gaze_Tracking": "--mode gaze",
@@ -510,18 +488,14 @@ class ControlPanel(QMainWindow):
 
         self.driver.cmd = f'python -u "{driver_path}" {mode_flag}'
 
-        # Update env on local python procs
         for p in (self.marker, self.driver, self.fes):
             p.env["PYTHONUNBUFFERED"] = "1"
             p.env["TRAINING_SUBJECT"] = self.training_subject
-
-        # Arduino / Online BCI config (driver can read the Arduino info)
             p.env["ARDUINO_ENABLED"]   = "1" if getattr(self, "arduino_enabled", False) else "0"
             p.env["ARDUINO_PORT"]      = getattr(self, "serial_port_name", "") or ""
             p.env["ARDUINO_BAUD"]      = str(getattr(self, "serial_baudrate", "9600"))
             p.env["BCI_MODEL_PATH"]    = getattr(self, "classifier_model_path", "") or ""
 
-        # Robot button state by mode
         self._update_robot_buttons_for_mode()
 
     def _update_robot_buttons_for_mode(self):
@@ -543,8 +517,6 @@ class ControlPanel(QMainWindow):
 
     def on_mode_changed(self, text: str):
         self.mode = text
-
-        # Keep config boolean in sync with dropdown
         sim_on = (self.mode == "Simulation")
         try:
             write_simulation_mode(sim_on)
@@ -617,9 +589,8 @@ class ControlPanel(QMainWindow):
         self.on_fes_start()
         self._append_log("FES", f"[{self._ts()}] Refreshed FES listener\n")
 
-        # ----- Arduino / Online BCI panel -----
+    # ----- Arduino / Online BCI panel -----
     def on_serial_refresh(self):
-        """Rellena la lista de puertos serie disponibles."""
         self.cmb_serial_port.clear()
         try:
             ports = list(serial.tools.list_ports.comports())
@@ -636,25 +607,17 @@ class ControlPanel(QMainWindow):
         for p in ports:
             desc = p.description or "n/a"
             text = f"{p.device} ({desc})"
-            # userData = nombre real del dispositivo
             self.cmb_serial_port.addItem(text, p.device)
 
-        # 1) Si ya había un puerto guardado en la sesión, recupéralo
         idx = -1
         if self.serial_port_name:
             idx = self.cmb_serial_port.findData(self.serial_port_name)
-
-        # 2) Si no, intenta usar el ARDUINO_PORT del config.py
         if idx < 0:
             idx = self.cmb_serial_port.findData(ARDUINO_PORT)
-
-        # 3) Si todavía no se encuentra, deja el primero
         if idx < 0:
             idx = 0
 
         self.cmb_serial_port.setCurrentIndex(idx)
-
-        # Conectar cambio de selección (evitamos múltiples conexiones)
         try:
             self.cmb_serial_port.currentIndexChanged.disconnect(self.on_serial_port_changed)
         except Exception:
@@ -682,7 +645,6 @@ class ControlPanel(QMainWindow):
         self._set_cmds_for_mode_and_driver()
 
     def on_serial_test(self):
-        """Abre el puerto seleccionado, prueba una conexión rápida y lo cierra."""
         port = self.serial_port_name or self.cmb_serial_port.currentData()
         if not port:
             self.lbl_serial_status.setText("Status: No port selected")
@@ -698,6 +660,9 @@ class ControlPanel(QMainWindow):
 
         try:
             ser = serial.Serial(port, baudrate=baud, timeout=1)
+            # Safety delay for Arduino reset
+            time.sleep(2)
+            
             if ser.is_open:
                 self.lbl_serial_status.setText(f"Status: OK on {port}")
                 self.serial_port_name = port
@@ -715,8 +680,8 @@ class ControlPanel(QMainWindow):
 
     def _send_arduino_manual_value(self, value: str):
         """
-        Envío rápido de '1' o '0' desde el panel.
-        Abre el puerto, manda el byte, cierra y escribe en logs.
+        Envía '1' o '0' manualmente.
+        INCLUYE PROTECCIÓN CONTRA RESET (sleep 2s).
         """
         port = self.serial_port_name or self.cmb_serial_port.currentData()
         if not port:
@@ -732,16 +697,25 @@ class ControlPanel(QMainWindow):
             return
 
         try:
+            # Abrir conexión
             ser = serial.Serial(port, baudrate=baud, timeout=1)
+            
+            # --- PROTECCIÓN CRÍTICA ---
+            # Esperar a que el Arduino termine de reiniciarse tras abrir el puerto
+            self._append_log("Panel", f"[{self._ts()}] Waiting for Arduino reset (2s)...\n")
+            # Forzamos repintado de la GUI para que no parezca colgada
+            QApplication.processEvents() 
+            time.sleep(2)
+            # --------------------------
+
             if not ser.is_open:
                 self.lbl_serial_status.setText("Status: Failed to open")
                 self._append_log("Panel", f"[{self._ts()}] Arduino manual: failed to open {port}\n")
                 return
 
-            # Enviar el comando ('1' o '0')
             ser.write(value.encode("ascii"))
             ser.flush()
-            self._append_log("Panel", f"[{self._ts()}] Arduino manual: sent '{value}' on {port} @ {baud}\n")
+            self._append_log("Panel", f"[{self._ts()}] Arduino manual: sent '{value}' on {port}\n")
             self.lbl_serial_status.setText(f"Status: Sent '{value}' on {port}")
             ser.close()
 
@@ -778,11 +752,9 @@ class ControlPanel(QMainWindow):
 
     # ----- Driver -----
     def on_driver_start(self):
-        # Gate: Marker must be ready
         if not _is_port_in_use(UDP_MARKER[1], "127.0.0.1"):
             QMessageBox.warning(self, "Gating", "Marker not ready. Start/refresh Marker first.")
             return
-        # Gate: FES must be running if enabled
         if self.fes_enabled_pref:
             if not (self.fes.q and self.fes.q.state() != QProcess.NotRunning):
                 QMessageBox.warning(self, "Gating", "FES is enabled but not running. Start FES first.")
@@ -792,12 +764,8 @@ class ControlPanel(QMainWindow):
     def on_driver_stop(self):
         self._stop_proc(self.driver, self.lbl_driver, "Driver")
 
-    # ----- Robot (no polling, no remote kill) -----
+    # ----- Robot (no polling) -----
     def on_init_robot(self):
-        """
-        Initialize robot base stack in a terminal:
-          killall.sh -> (LED yellow) -> sleep 10 -> run.sh -> (LED green)
-        """
         ssh = (
             "sshpass -p 'Harmonic-03' ssh -tt root@192.168.2.1 "
             "'cd /opt/hbi/dev/bin && ./killall.sh && sleep 10 && ./run.sh'"
@@ -814,19 +782,16 @@ class ControlPanel(QMainWindow):
             QMessageBox.critical(self, "Initialize Robot", f"Failed to start init sequence:\n{e}")
 
     def _on_robot_term_finished(self, code: int, status):
-        # Terminal is gone => tool not running (for our purposes)
         self._set_led(self.lbl_robot, "stopped")
         self.btn_robot_start.setEnabled(True)
         self._append_log("Robot", f"[{self._ts()}] SSH terminal closed (code={code})\n")
         self.robot_term = None
-
 
     def on_robot_start(self):
         if self.mode == "Simulation":
             QMessageBox.information(self, "Simulation", "Robot disabled in Simulation mode.")
             return
 
-        # Pick tool from mode
         if self.mode == "MI_Bimanual":
             tool = "MI_Bimanual"
         elif self.mode == "Gaze_Tracking":
@@ -835,35 +800,27 @@ class ControlPanel(QMainWindow):
             QMessageBox.warning(self, "Robot", "No robot tool for this mode.")
             return
 
-        # If a terminal is already open, do nothing
         if self.robot_term and self.robot_term.state() != QProcess.NotRunning:
             return
 
-        # Launch gnome-terminal as a QProcess so we can track its lifetime
         self.robot_term = QProcess(self)
-        # gnome-terminal -- bash -lc "<SSH ... 'cd ... && ./TOOL && exec bash'>"
         command = (
             "sshpass -p 'Harmonic-03' ssh -tt root@192.168.2.1 "
             f"'cd /opt/hbi/dev/bin/tools && ./{tool} && exec bash'"
         )
 
-        # When the terminal process starts, turn LED green + disable Start
         self.robot_term.started.connect(lambda: (
             self._set_led(self.lbl_robot, "running"),
             self.btn_robot_start.setEnabled(False),
             self._append_log("Robot", f"[{self._ts()}] SSH terminal opened for {tool}\n")
         ))
-
-        # When the terminal closes (Ctrl-C or manual close), turn LED gray + re-enable Start
         self.robot_term.finished.connect(self._on_robot_term_finished)
 
-        # Program + args for gnome-terminal
         self.robot_term.setProgram("gnome-terminal")
         self.robot_term.setArguments(["--wait", "--", "bash", "-lc", command])
         self.robot_term.start()
 
     def on_robot_remove_overrides(self):
-        """Run ./RemoveOverrides on the robot (non-interactive)."""
         try:
             res = subprocess.run(
                 ["sshpass","-p","Harmonic-03","ssh","-o","StrictHostKeyChecking=no","-tt",
@@ -879,17 +836,14 @@ class ControlPanel(QMainWindow):
 
     # ----- External apps -----
     def on_open_labrec(self):
-        # If already open, do nothing
         if self.labrec_term and self.labrec_term.state() != QProcess.NotRunning:
             return
 
         self.labrec_term = QProcess(self)
-        # When the terminal starts, LED -> green
         self.labrec_term.started.connect(lambda: (
             self._set_led(self.lbl_labrec, "running"),
             self._append_log("Panel", f"[{self._ts()}] LabRecorder terminal opened\n")
         ))
-        # When it closes, LED -> gray
         def _labrec_closed(code, status):
             self._set_led(self.lbl_labrec, "stopped")
             self._append_log("Panel", f"[{self._ts()}] LabRecorder terminal closed (code={code})\n")
@@ -897,7 +851,6 @@ class ControlPanel(QMainWindow):
         self.labrec_term.finished.connect(_labrec_closed)
 
         self.labrec_term.setProgram("gnome-terminal")
-        # --wait keeps this QProcess alive until the terminal tab/window exits
         self.labrec_term.setArguments(["--wait", "--", "bash", "-lc", "LabRecorder"])
         self.labrec_term.start()
 
@@ -931,18 +884,15 @@ class ControlPanel(QMainWindow):
         parts = shlex.split(p.cmd)
         q.setProgram(parts[0]); q.setArguments(parts[1:])
         q.setWorkingDirectory(p.cwd)
-        # env
         env = os.environ.copy(); env.update(p.env)
         from PySide6.QtCore import QProcessEnvironment
         qenv = QProcessEnvironment()
         for k, v in env.items(): qenv.insert(k, v)
         q.setProcessEnvironment(qenv)
-        # connect
         q.started.connect(lambda: self._on_started(p, led, title))
         q.finished.connect(lambda code, status: self._on_finished(p, led, title, code, status))
         q.readyReadStandardOutput.connect(lambda: self._on_stdout(p, title))
         q.readyReadStandardError.connect(lambda: self._on_stderr(p, title))
-        # go
         p.out.clear(); p.err.clear()
         p.q = q; p.status = "starting"; self._set_led(led, "starting")
         q.start()
@@ -1031,7 +981,6 @@ class ControlPanel(QMainWindow):
 
     # ---------- Cheap LED maintainer for QProcess-procs ----------
     def _tick(self):
-        # Keep QProcess-managed LEDs in sync (Marker, FES, Driver). Robot LEDs are manual.
         for p, led in ((self.marker, self.lbl_marker),
                        (self.fes, self.lbl_fes),
                        (self.driver, self.lbl_driver)):
@@ -1042,7 +991,6 @@ class ControlPanel(QMainWindow):
 
     # ---------- Close cleanup ----------
     def closeEvent(self, event):
-        # Try to stop local processes
         for p, led, title in (
             (self.driver, self.lbl_driver, "Driver"),
             (self.fes,    self.lbl_fes,    "FES"),
@@ -1050,7 +998,6 @@ class ControlPanel(QMainWindow):
         ):
             try: self._stop_proc(p, led, title)
             except Exception: pass
-        # Robot terminal just closes with the app; no remote kill
         event.accept()
 
 # ----------------- Entrypoint -----------------

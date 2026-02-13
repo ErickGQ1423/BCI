@@ -9,7 +9,7 @@
 
 
 WORKING_DIR = "/home/lab-admin/BCI_project/BCI"
-DATA_DIR = "/home/lab-admin/BCI_project/CurrentStudy"
+DATA_DIR = "/home/lab-admin/Documents/CurrentStudy"
 SIMULATION_MODE = True
 TRAINING_SUBJECT = "Prueba"
 # EEG Settings
@@ -28,12 +28,12 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 2  # Total number of trials
+TOTAL_TRIALS = 10   # Total number of trialsB
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
 TIME_MI = 5 # time for motor imagery and rest
-TIME_ROB = 1 # time allocated for robot to move
+TIME_ROB =  5# time allocated for robot to move
 TIME_STATIONARY = 1 # time for stationary feedback after no movement/failed movement trial
 TIME_MASTER_MOVE = 5 # allowed timing for participant to position robot with master arm. Bimanual experiment.
 TIMING = True #obsolete
@@ -41,7 +41,7 @@ SHAPE_MAX = 0.7 #maximum fill
 SHAPE_MIN = 0.5 #minimum fill 
 ROBOT_TRAJECTORY = ["a"] # Not using
 BIG_BROTHER_MODE = True #this toggle exports the game to the second monitor automatically, while retaining the running log in the first windows linux terminal
-SEND_PROBS = True
+SEND_PROBS = False
 
 
 # Early-stop policy: "correct_only" (current behavior) or "either"
@@ -56,7 +56,7 @@ BASELINE_DURATION = 1 #seconds
 ACCURACY_THRESHOLD = 0.6  # OBS Accuracy threshold to determine "Correct" (plan to obsolete)
 THRESHOLD_MI = 0.6 #Threshold for MI "correct"
 THRESHOLD_REST = 0.6 #Threshold for REST "Correct"
-RELAXATION_RATIO = 0.6 # relaxation ratio for sustained MI during movement
+RELAXATION_RATIO = 0.0 # relaxation ratio for sustained MI during movement
 MIN_PREDICTIONS = 8 # Min number of predictions during Online experiment before the decoder can end early
 STEP_SIZE = 1/16
 CLASSIFICATION_OFFSET = 0 # Offset for "classification window" starting point
@@ -103,6 +103,7 @@ orange = (255, 165, 0)
 # software triggers
 TRIGGERS = {
     "MI_BEGIN": "200",
+    #"MI_PREPARE": "210",
     "MI_END": "220",
     "MI_EARLYSTOP": "240",
     "MI_PROBS": "2000",
@@ -130,6 +131,7 @@ TRIGGERS = {
     
     
     "REST_BEGIN": "100",
+    #"REST_PREPARE": "110",
     "REST_END": "120",
     "REST_EARLYSTOP": "140",
     "REST_PROBS": "1000",

@@ -7,6 +7,7 @@ import sys
 import time
 import random
 import os
+import serial  # <--- AGREGADO: Comunicación Serial
 from pathlib import Path
 from pylsl import StreamInlet, resolve_stream
 
@@ -30,6 +31,17 @@ fes_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 FES_toggle = config.FES_toggle
 
+# --- ARDUINO CONFIG (AGREGADO) ---
+# OPCIÓN A: Usar con Control Panel (Déjala comentada para tu prueba de AHORITA)
+ARDUINO_PORT = os.environ.get("ARDUINO_PORT", "")
+
+# OPCIÓN B: Usar Manual desde Terminal (Descomentada AHORA)
+# ARDUINO_PORT = "/dev/ttyACM0"
+
+ARDUINO_BAUD = int(os.environ.get("ARDUINO_BAUD", 9600))
+arduino_ser = None  # Variable para la conexión
+# ---------------------------------
+
 # Logging
 logger = LoggerManager.auto_detect_from_subject(
     subject=config.TRAINING_SUBJECT,
@@ -45,14 +57,30 @@ pygame.init()
 
 if config.BIG_BROTHER_MODE:
     os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
-    screen = pygame.display.set_mode((3840, 2160), pygame.NOFRAME)
+    screen = pygame.display.set_mode((1920, 1080), pygame.NOFRAME)
 else:
-    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    screen = pygame.display.set_mode((0, 0), pygame.NOFRAME)
 
 screen_width, screen_height = pygame.display.Info().current_w, pygame.display.Info().current_h
 
 # ============================================================
-# VISUAL FUNCTIONS
+# ARDUINO SETUP (AGREGADO)
+# ============================================================
+if ARDUINO_PORT:
+    try:
+        logger.log_event(f"Connecting to Glove (Arduino) on {ARDUINO_PORT}...")
+        arduino_ser = serial.Serial(ARDUINO_PORT, ARDUINO_BAUD, timeout=0.1)
+        # Espera de seguridad para el reinicio del Arduino
+        time.sleep(2)
+        logger.log_event("Glove connected successfully.")
+    except Exception as e:
+        logger.log_event(f"ERROR connecting to Glove: {e}")
+        arduino_ser = None
+else:
+    logger.log_event("No Arduino port configured (Visual Only Mode).")
+
+# ============================================================
+# VISUAL FUNCTIONS (TUS FUNCIONES EXACTAS)
 # ============================================================
 
 def draw_arrow_directional(screen, pos_x, pos_y, size, color, direction="right"):
@@ -131,19 +159,15 @@ def draw_pretrial_screen(next_color, time_ball_state):
     draw_time_balls(time_ball_state, screen_width, screen_height, mode="single", 
                     indicator_color=next_color, single_pos=NEXT_INDICATOR_POS, ball_radius=int(base_size * 0.4))
     
-    # ============================================================
-    # AGREGAR TEXTO AQUÍ (NUEVA SECCIÓN)
-    # ============================================================
-    font_prep = pygame.font.SysFont(None, 72) # Tamaño un poco menor que el feedback para diferenciar
+    # Text Section
+    font_prep = pygame.font.SysFont(None, 72) 
     if is_mi:
         prep_msg = f"Prepare: Flex {config.ARM_SIDE.upper()} Hand"
     else:
-        prep_msg = "Prepare: Rest"
+        prep_msg = "Rest"
     
     txt_surface = font_prep.render(prep_msg, True, config.white)
-    # Lo posicionamos en la misma coordenada X que el indicador, pero más abajo (ajusta +400 según necesites)
     screen.blit(txt_surface, (screen_width // 2 - txt_surface.get_width() // 2, screen_height // 2 + 300))
-    # ============================================================
 
     # 3. Directional Arrow (Line + Triangle)
     arrow_dir = "right" if is_mi else "left"
@@ -156,6 +180,15 @@ def show_feedback(duration, mode):
     start_time = time.time()
     pos_x, pos_y = int(screen_width * NEXT_INDICATOR_POS[0]), int(screen_height * NEXT_INDICATOR_POS[1])
     base_size = int(min(screen_width, screen_height) * 0.08 * NEXT_INDICATOR_SCALE)
+
+    # --- CONTROL ARDUINO (AGREGADO) ---
+    if arduino_ser and arduino_ser.is_open:
+        try:
+            command = b'1' if mode == 0 else b'0'
+            arduino_ser.write(command)
+        except Exception as e:
+            logger.log_event(f"Arduino Error: {e}")
+    # ----------------------------------
 
     while time.time() - start_time < duration:
         progress = (time.time() - start_time) / duration
@@ -171,7 +204,7 @@ def show_feedback(duration, mode):
                              pos_y - int(base_size*0.35), int(base_size*0.7), int(base_size*0.7)))
             # Keep Arrow
             draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), "right")
-            msg = f"Flex {config.ARM_SIDE.upper()} Hand"
+            msg = f"Imagine Closing {config.ARM_SIDE.upper()} Hand"
         else: # REST
             draw_ball_fill(progress, screen_width, screen_height, False)
             # Maintain Visual Identity (Circle)
@@ -216,7 +249,7 @@ try:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_RIGHT: backdoor_mode = 0; waiting = False
                     if event.key == pygame.K_DOWN: backdoor_mode = 1; waiting = False
-            if config.TIMING and (pygame.time.get_ticks() - countdown_start >= 1500):
+            if config.TIMING and (pygame.time.get_ticks() - countdown_start >= 2000):
                 waiting = False
             draw_pretrial_screen(next_color, time_ball_state=1)
             clock.tick(60)
@@ -229,6 +262,14 @@ try:
         if mode == 0 and FES_toggle: send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_SENS_GO", logger)
 
         if not show_feedback(config.TIME_MI, mode): break
+
+        # ==============================================================================
+        # [NUEVO] FORZAR RELAJACIÓN INMEDIATA (MANDAR '0')
+        # ==============================================================================
+        # Esto asegura que apenas se quite el cuadro rojo, el guante se abra.
+        if arduino_ser and arduino_ser.is_open:
+            arduino_ser.write(b'0') 
+        # ==============================================================================
 
         # END TRIAL / ROBOT
         end_trig = config.TRIGGERS["MI_END"] if mode == 0 else config.TRIGGERS["REST_END"]
@@ -246,9 +287,18 @@ try:
         else:
             display_multiple_messages_with_udp([" "], [config.white], [0], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger)
 
+        # Relajar guante entre trials (AGREGADO)
+        if arduino_ser and arduino_ser.is_open:
+            arduino_ser.write(b'0')
+
         display_fixation_period(3)
         current_trial += 1
 
 finally:
     pygame.quit()
+    # Cierre seguro del puerto serial (AGREGADO)
+    if arduino_ser and arduino_ser.is_open:
+        arduino_ser.write(b'0')
+        arduino_ser.close()
     [s.close() for s in [udp_socket_marker, udp_socket_robot, fes_socket]]
+

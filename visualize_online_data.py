@@ -10,11 +10,11 @@ from scipy.stats import zscore
 from Utils.preprocessing import concatenate_streams
 from Utils.stream_utils import get_channel_names_from_xdf, load_xdf
 
-subject = "CLIN_SUBJ_003"
-session = "S001ONLINE"
+subject = "LAB_SUBJ_001"
+session = "S001OFFLINE"
 
 # Construct the EEG directory path dynamically
-xdf_dir = os.path.join("/home/arman-admin/Documents/CurrentStudy", f"sub-{subject}", f"ses-{session}", "eeg/")
+xdf_dir = os.path.join("/home/lab-admin/Documents/CurrentStudy", f"sub-{subject}", f"ses-{session}", "eeg/")
 
 # Ensure the directory exists
 if not os.path.exists(xdf_dir):
@@ -180,7 +180,7 @@ for ch in raw.info["chs"]:
 highband = 13
 lowband = 8
 
-time_start = -1
+time_start = -2.5
 baseline_period = 1
 time_end = 2
 

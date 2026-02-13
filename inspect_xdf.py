@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # === CONFIGURACIÓN ===
-file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf"
-
+# file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf"
+file_path =  "/home/lab-admin/Documents/CurrentStudy/sub-P009/ses-S001/eeg/sub-P009_ses-S001_task-Default_run-001_eeg.xdf"
 # === CARGA DEL ARCHIVO ===
 streams, header = pyxdf.load_xdf(file_path)
 print(f"Found {len(streams)} streams in the file.\n")

@@ -290,7 +290,22 @@ def _await_ack_blocking(expected_token: str, logger=None) -> bool:
             _udp_log(logger, f"[ROBOT->UDP][IGNORED DURING WAIT] {txt}")
     return False
 
-
+_fes_sock = None
+def _ensure_fes_socket(logger=None):
+    """Dedicated socket for FES to avoid binding conflicts."""
+    global _fes_sock
+    if _fes_sock is not None:
+        return _fes_sock
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.bind(("0.0.0.0", 0)) # Ephemeral port
+        s.setblocking(False)
+        _fes_sock = s
+        return _fes_sock
+    except Exception as e:
+        _udp_log(logger, f"[ERROR] FES socket unavailable: {e}")
+        return None
+    
 # =========================================================
 # Public API
 # =========================================================
@@ -547,7 +562,6 @@ def display_multiple_messages_with_udp(
 
     return query_payload
 
-
 def send_udp_message(
     sock, ip, port, message,
     logger=None, quiet=False,
@@ -559,42 +573,63 @@ def send_udp_message(
     capture_query: bool = False
 ):
     """
-    Simulation mode support:
-      - If sending to robot endpoint and SIMULATION_MODE=True: suppress send + ACK wait.
-      - If sending to marker endpoint: use marker socket (never depends on control bind).
+    Simulation mode support: True
+      - Robot: Suppress send + ACK wait (SAFETY).
+      - FES: ALWAYS SEND (Active in simulation).
+      - Marker: ALWAYS SEND.
     """
     if not quiet:
         _log = lambda m: _udp_log(logger, m)
     else:
         _log = lambda m: None  # noqa: E731
 
-    # endpoints from config (best effort)
+    # 1. LOAD CONFIGURATIONS
     ro = getattr(_config, "UDP_ROBOT", {}) or {}
     mk = getattr(_config, "UDP_MARKER", {}) or {}
+    fs = getattr(_config, "UDP_FES", {}) or {}
+
+    # Robot Endpoints
     robot_ip = ro.get("IP", _ROBOT_IP)
     robot_port = int(ro.get("PORT", _ROBOT_PORT))
+    
+    # Marker Endpoints
     marker_ip = mk.get("IP", _MARKER_IP)
     marker_port = int(mk.get("PORT", _MARKER_PORT)) if mk.get("PORT", _MARKER_PORT) else None
 
+    # FES Endpoints
+    fes_ip = fs.get("IP", None)
+    fes_port = int(fs.get("PORT", 0)) if fs.get("PORT", None) else None
+
+    # 2. IDENTIFY DESTINATION
     is_robot  = (ip == robot_ip and int(port) == int(robot_port))
     is_marker = (marker_ip is not None and marker_port is not None and ip == marker_ip and int(port) == int(marker_port))
+    is_fes    = (fes_ip is not None and fes_port is not None and ip == fes_ip and int(port) == int(fes_port))
     is_traj   = _is_coords_string(message)
 
-    # Simulation mode: suppress robot sends
+    # 3. HANDLE SIMULATION MODE
+    # STRICTLY suppress Robot only. FES is allowed through.
     if SIMULATION_MODE and is_robot:
         _log(f"[SIM] Suppressed robot send: {message} -> {ip}:{port}")
         if expect_ack:
             return (True, None)
         return None
 
-    # Choose the right socket:
-    # - marker sends should not depend on control socket bind
+    # 4. CHOOSE THE RIGHT SOCKET
     if is_marker:
         s = _ensure_marker_socket(logger)
         if s is None:
             _log("[ERROR] Marker socket unavailable; cannot send.")
             return (False, None) if expect_ack else None
+            
+    elif is_fes:
+        # Use dedicated FES socket
+        s = _ensure_fes_socket(logger)
+        if s is None:
+            _log("[ERROR] FES socket unavailable; cannot send.")
+            return (False, None) if expect_ack else None
+            
     else:
+        # Default to Control Socket (Robot)
         s = _ensure_control_socket(logger)
         if s is None:
             _log("[ERROR] Control socket unavailable; cannot send.")
@@ -611,7 +646,7 @@ def send_udp_message(
 
     attempts = 0
     while True:
-        # Only drain control socket when we expect robot ACKs (marker sends don't need this)
+        # Only drain control socket when we expect robot ACKs
         if is_robot:
             _drain_control_socket(max_ms=30, logger=logger)
 
@@ -621,10 +656,20 @@ def send_udp_message(
             _log(f"UDP send failed to {ip}:{port} — {e}")
             return (False, None) if expect_ack else None
 
-        prefix = "[UDP->ROBOT]" if is_robot else ("[TRIGGER]" if is_marker else f"[UDP->{ip}:{port}]")
-        kind   = "Sent trajectory" if is_traj else "Sent opcode"
+        # 5. DETERMINE LOG PREFIX
+        if is_robot:
+            prefix = "[UDP->ROBOT]"
+        elif is_fes:
+            prefix = "[UDP->FES]"
+        elif is_marker:
+            prefix = "[TRIGGER]"
+        else:
+            prefix = f"[UDP->{ip}:{port}]"
+
+        kind = "Sent trajectory" if is_traj else "Sent opcode"
         _log(f"{prefix} {kind}: {message}")
 
+        # --- INTERNAL STATE TRACKING (ROBOT ONLY) ---
         global _pending_target_ready, _pending_target_ctx
         try:
             rop = getattr(_config, "ROBOT_OPCODES", {}) or {}
@@ -641,16 +686,15 @@ def send_udp_message(
             _pending_target_ready = False
             _pending_target_ctx   = None
 
-        # Fast exit
+        # Fast exit (FES and Marker don't wait for ACKs)
         if not expect_ack and not capture_query:
             return None
 
-        # If this is not robot traffic, don't try to wait for robot ACKs here.
+        # If this is NOT robot traffic, we generally don't wait for ACKs
         if not is_robot:
-            # capture_query isn't meaningful for marker stream in this function
             return (True, None) if expect_ack else None
 
-        # Wait window (robot ACK path)
+        # --- ROBOT ACK WAIT LOOP ---
         end = time.time() + ack_timeout
         acked = False
         query_payload = None

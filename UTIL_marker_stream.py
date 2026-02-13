@@ -61,7 +61,7 @@ def get_eeg_inlet():
 
 
 def get_current_eeg_timestamp(inlet, udp_received_time=0, timeout=0.2):
-    #inlet.flush()
+    inlet.flush()
     local_timestamp = local_clock()  # fallback
     sample, timestamp = inlet.pull_sample(timeout=timeout)
     timestamp_after_pull = local_clock()

@@ -10,11 +10,11 @@ from scipy.stats import zscore
 from Utils.preprocessing import concatenate_streams
 from Utils.stream_utils import get_channel_names_from_xdf, load_xdf
 
-subject = "CLIN_SUBJ_003"
-session = "S001ONLINE"
+subject = "S26CLASS_SUBJ_001"
+session = "S002ONLINE_FES"
 
 # Construct the EEG directory path dynamically
-xdf_dir = os.path.join("/home/arman-admin/Documents/CurrentStudy", f"sub-{subject}", f"ses-{session}", "eeg/")
+xdf_dir = os.path.join("/home/lab-admin/Documents/CurrentStudy", f"sub-{subject}", f"ses-{session}", "eeg/")
 
 # Ensure the directory exists
 if not os.path.exists(xdf_dir):
@@ -76,19 +76,19 @@ marker_data = np.array([int(value[0]) for value in marker_stream['time_series']]
 marker_timestamps = np.array([float(value[1]) for value in marker_stream['time_series']])
 
 
-# 🔻 Remove all markers >= 1000
-keep = marker_data < 1000
+# 🔻 FILTER: Keep ONLY markers 100, 120, 200, 220
+target_markers = [100, 120, 200, 220]
+keep = np.isin(marker_data, target_markers)
+
 removed = int(marker_data.size - keep.sum())
 marker_data = marker_data[keep]
 marker_timestamps = marker_timestamps[keep]
-print(f"🧹 Removed {removed} markers >= 1000; kept {marker_data.size}.")
+
+print(f"🧹 Removed {removed} markers not in {target_markers}; kept {marker_data.size}.")
 
 
-
-
-
-#print(marker_stream['time_series'])
-#print(marker_timestamps)
+print(marker_stream['time_series'])
+print(marker_timestamps)
 print("\n EEG Channels from XDF:", channel_names)
 #print(marker_stream[0])
 # Load standard 10-20 montage
@@ -144,7 +144,7 @@ else:
 
 # Rename channels to match montage format
 raw.rename_channels(rename_dict)
-
+'''
 # ==========================================
 # Optional: Restrict to a subset of channels (e.g., motor region)
 # ==========================================
@@ -156,7 +156,7 @@ keep_channels = [ch for ch in MOTOR_CHANNEL_NAMES if ch in raw.ch_names]
 raw.pick_channels(keep_channels)
 print(f"✅ Keeping only motor channels: {keep_channels}")
 
-
+'''
 
 
 # Debug: Print missing channels
@@ -191,7 +191,7 @@ for ch in raw.info["chs"]:
 highband = 13
 lowband = 8
 
-time_start = -1
+time_start = -2.5
 baseline_period = 1
 time_end = 5
 
