@@ -625,6 +625,7 @@ from Utils.networking import send_udp_message, display_multiple_messages_with_ud
 config = None
 logger = None
 model = None
+template = None  # ← agrega esta línea
 
 # Surfaces/screen geometry used by draw helpers
 screen = None
@@ -758,6 +759,11 @@ def append_trial_probabilities_to_csv(trial_probabilities, mode, trial_number,
                                       predicted_label, early_cutout,
                                       mi_threshold, rest_threshold, logger,
                                       phase):
+        # ── SIMULATION MODE — lista vacía, nada que guardar ──────
+    if len(trial_probabilities) == 0:
+        logger.log_event(f"ℹ️ No probabilities to log (simulation mode) — Trial {trial_number}")
+        return
+
     correct_class = 200 if mode == 0 else 100
     trial_probabilities = np.array(trial_probabilities)
 
@@ -889,43 +895,63 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
     except ValueError:
         return leaky_integrator.accumulated_probability, predictions, all_probabilities
 
-    # === Covariance Matrix ===
-    cov_matrix = (window @ window.T) / np.trace(window @ window.T)
+    if not np.isfinite(window).all():
+        return leaky_integrator.accumulated_probability, predictions, all_probabilities
 
-    if config.LEDOITWOLF:
-        cov_matrix = np.array([LedoitWolf().fit(cov_matrix).covariance_])
+    T_test = None
+
+    if hasattr(model, 'covmeans_'):
+        # === MDM — Covariance Matrix (template matching Racz 2023 — 10×10) ===
+        t_len    = window.shape[1]
+        extended  = np.concatenate([window, template[:, :t_len]], axis=0)
+        raw_cov   = extended @ extended.T
+        trace_val = np.trace(raw_cov)
+
+        if not np.isfinite(trace_val) or trace_val < 1e-12:
+            return leaky_integrator.accumulated_probability, predictions, all_probabilities
+
+        cov_matrix  = raw_cov / trace_val
+        cov_matrix += 1e-4 * np.eye(10)
+        cov_matrix  = np.expand_dims(cov_matrix, axis=0)
+
+        if config.RECENTERING:
+            cov_matrix = np.squeeze(cov_matrix, axis=0)
+            if counter == 0 or Prev_T is None:
+                Prev_T = cov_matrix
+            T_test     = geodesic_riemann(Prev_T, cov_matrix, 1 / (counter + 1))
+            T_invsqrtm = invsqrtm(Prev_T)
+            cov_matrix = T_invsqrtm @ cov_matrix @ T_invsqrtm.T
+            cov_matrix = np.expand_dims(cov_matrix, axis=0)
+
+        probabilities = model.predict_proba(cov_matrix)[0]
+        mdm_predicted = model.classes_[np.argmax(probabilities)]
+        predicted_label   = 200 if mdm_predicted == 2 else 100
+        mdm_correct_label = 2 if mode == 0 else 1
+        correct_class_idx = np.where(model.classes_ == mdm_correct_label)[0][0]
+        current_confidence = probabilities[correct_class_idx]
+
     else:
-        cov_matrix = np.expand_dims(cov_matrix, axis=0)
-        shrinkage = Shrinkage(shrinkage=config.SHRINKAGE_PARAM)
-        cov_matrix = shrinkage.fit_transform(cov_matrix)
-
-    # === Adaptive Recentering ===
-    if config.RECENTERING:
-        cov_matrix = np.squeeze(cov_matrix, axis=0)
-
-        if counter == 0 or Prev_T is None:
-            Prev_T = cov_matrix
-
-        T_test = geodesic_riemann(Prev_T, cov_matrix, 1 / (counter + 1))
-        T_invsqrtm = invsqrtm(Prev_T)
-        cov_matrix = T_invsqrtm @ cov_matrix @ T_invsqrtm.T
-        cov_matrix = np.expand_dims(cov_matrix, axis=0)
-
-    # === Classification ===
-    probabilities = model.predict_proba(cov_matrix)[0]
-    predicted_label = model.classes_[np.argmax(probabilities)]
-
-    correct_label = 200 if mode == 0 else 100
-    correct_class_idx = np.where(model.classes_ == correct_label)[0][0]
-    current_confidence = probabilities[correct_class_idx]
+        # === LDA/sklearn — features de amplitud en puntos temporales ===
+        n_samples = window.shape[1]
+        t_idx     = np.linspace(0, n_samples - 1, 11).astype(int)
+        features  = window[:, t_idx].flatten().reshape(1, -1)
+        if not np.isfinite(features).all():
+            return leaky_integrator.accumulated_probability, predictions, all_probabilities
+        probabilities  = model.predict_proba(features)[0]
+        classes        = model.classes_
+        mi_idx         = int(np.argmax(classes))   # clase mayor = MI (200 o 2)
+        rest_idx       = 1 - mi_idx
+        predicted_label    = 200 if np.argmax(probabilities) == mi_idx else 100
+        correct_class_idx  = mi_idx if mode == 0 else rest_idx
+        current_confidence = probabilities[correct_class_idx]
 
     # === Determine if recentering update should occur ===
     should_update_T = False
     if config.RECENTERING and update_recentering:
         if config.USE_CONFIDENCE_GATE:
-            predicted_correct = (predicted_label == correct_label)
-            confident_enough = (current_confidence >= config.RECENTERING_CONFIDENCE_THRESHOLD)
-            should_update_T = predicted_correct and confident_enough
+            predicted_correct = (predicted_label == (200 if mode == 0 else 100))
+            confident_enough  = (current_confidence >= config.RECENTERING_CONFIDENCE_THRESHOLD)
+            should_update_T   = predicted_correct and confident_enough
         else:
             should_update_T = True
 
@@ -1072,6 +1098,8 @@ def show_feedback(duration=5, mode=0, eeg_state=None):
     accuracy_threshold = config.THRESHOLD_MI if mode == 0 else config.THRESHOLD_REST
     opposed_threshold = config.THRESHOLD_REST if mode == 0 else config.THRESHOLD_MI
 
+    screen = pygame.display.get_surface()
+    screen.fill(config.black)
     pygame.display.flip()
 
     # Send UDP triggers
@@ -1084,8 +1112,13 @@ def show_feedback(duration=5, mode=0, eeg_state=None):
         send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"],
                          config.TRIGGERS["REST_BEGIN"], logger=logger)
 
+    # ── SIMULATION MODE — skip classification ───────────────── #Esta parte yo la agregue para probar la Simulacion con Online
+    if getattr(config, 'SIMULATION_MODE', False):
+        pygame.time.wait(int(duration * 1000))
+        return None, 0.5, leaky_integrator, [], False
+    
     clock = pygame.time.Clock()
-    running_avg_confidence = 0.5
+    running_avg_confidence = 0.0
     current_confidence = 0.5
     next_tick = start_time + window_size
 
@@ -1183,6 +1216,19 @@ def show_feedback(duration=5, mode=0, eeg_state=None):
             break
 
     pygame.display.flip()
+
+    # === Probability summary for diagnostics ===
+    if all_probabilities:
+        probs_arr = np.array(all_probabilities)  # shape (N, 3): [time, P_rest, P_mi]
+        p_rest = probs_arr[:, 1]
+        p_mi   = probs_arr[:, 2]
+        mode_label = "MI" if mode == 0 else "REST"
+        logger.log_event(
+            f"[PROBS] {mode_label} | n={len(p_mi)} | "
+            f"P(MI):   mean={p_mi.mean():.3f}  min={p_mi.min():.3f}  max={p_mi.max():.3f} | "
+            f"P(REST): mean={p_rest.mean():.3f}  min={p_rest.min():.3f}  max={p_rest.max():.3f} | "
+            f"integrator_final={running_avg_confidence:.3f}"
+        )
 
     # Final Decision
     if running_avg_confidence >= accuracy_threshold:

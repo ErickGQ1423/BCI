@@ -93,6 +93,16 @@ class EEGStreamState:
                 raw_chunk, self.filter_bank, self.filter_state
             )
 
+            # === Guard: reset filter and buffer if artifact produced NaN/Inf ===
+            if not np.isfinite(filtered_chunk).all():
+                self.filter_state = {}
+                self.filtered_buffer.clear()
+                self.baseline_mean = None
+                return
+
+            # === CAR — Common Average Reference ===
+            filtered_chunk -= filtered_chunk.mean(axis=0, keepdims=True)
+
             # === Append filtered samples to buffer ===
             for i in range(filtered_chunk.shape[1]):
                 self.filtered_buffer.append(filtered_chunk[:, i])

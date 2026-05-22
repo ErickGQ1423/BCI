@@ -710,7 +710,7 @@ if config.BIG_BROTHER_MODE:
     screen_width = monitor_w
     screen_height = monitor_h
 else:
-    os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
+    os.environ["SDL_VIDEO_WINDOW_POS"] = "1920,0"
     screen = pygame.display.set_mode((monitor_w, monitor_h), pygame.NOFRAME)
     screen_width = monitor_w
     screen_height = monitor_h
@@ -752,8 +752,12 @@ subject_model_path = os.path.join(subject_model_dir, f"sub-{config.TRAINING_SUBJ
 
 try:
     with open(subject_model_path, 'rb') as f:
-        model = pickle.load(f)
+        model_pkg = pickle.load(f)
+    model    = model_pkg['model']
+    template = model_pkg.get('template', None)
+    model_type = model_pkg.get('model_type', 'MDM')
     logger.log_event(f"✅ Model loaded: {subject_model_path}")
+    logger.log_event(f"   Model type: {model_type} | classes: {model.classes_}")
 except FileNotFoundError:
     logger.log_event(f"❌ Model not found: {subject_model_path}", level="error")
     sys.exit(1)
@@ -767,6 +771,7 @@ _RC.config = config
 _RC.logger = logger
 _RC.model = model
 _RC.screen = screen
+_RC.template = template   # ← agrega esta línea
 _RC.screen_width = screen_width
 _RC.screen_height = screen_height
 _RC.udp_socket_marker = udp_socket_marker
@@ -814,60 +819,192 @@ def draw_arrow_directional(screen, pos_x, pos_y, size, color, direction="right")
     pygame.draw.line(screen, color, line_start, line_end, 12)
     pygame.draw.polygon(screen, color, points)
 
-def draw_pretrial_screen_online(mode, time_ball_state=1):
-    """
-    Replica el look de OFFLINE en preparación:
-      - MI: cuadro rojo + flecha derecha
-      - REST: círculo azul + flecha izquierda
-      - time_balls en mode='single' en el indicador NEXT
-    """
+# def draw_pretrial_screen_online(mode, time_ball_state=1):
+#     """
+#     Replica el look de OFFLINE en preparación:
+#       - MI: cuadro rojo + flecha derecha
+#       - REST: círculo azul + flecha izquierda
+#       - time_balls en mode='single' en el indicador NEXT
+#     """
+
+#     screen.fill(config.black)
+#     draw_fixation_cross(screen_width, screen_height)
+
+#     pos_x = int(screen_width * NEXT_INDICATOR_POS[0])
+#     pos_y = int(screen_height * NEXT_INDICATOR_POS[1])
+#     base_size = int(min(screen_width, screen_height) * 0.08 * NEXT_INDICATOR_SCALE)
+
+#     is_mi = (mode == 0)
+#     next_color = (255, 50, 50) if is_mi else (0, 120, 255)
+
+#     # 1) Shape background
+#     if is_mi:
+#         bg_rect = pygame.Rect(pos_x - base_size // 2, pos_y - base_size // 2, base_size, base_size)
+#         pygame.draw.rect(screen, next_color, bg_rect)
+#     else:
+#         pygame.draw.circle(screen, next_color, (pos_x, pos_y), base_size // 2)
+
+#     # 2) Single time-ball indicator (igual al offline)
+#     draw_time_balls(
+#         time_ball_state,
+#         screen_width,
+#         screen_height,
+#         mode="single",
+#         indicator_color=next_color,
+#         single_pos=NEXT_INDICATOR_POS,
+#         ball_radius=int(base_size * 0.4),
+#     )
+
+#     # 3) Texto de preparación
+#     font_prep = pygame.font.SysFont(None, 96)
+#     if is_mi:
+#         prep_msg = f"Prepare to close {config.ARM_SIDE.upper()} hand"
+#     else:
+#         prep_msg = "Rest"
+
+#     txt_surface = font_prep.render(prep_msg, True, config.white)
+#     screen.blit(
+#         txt_surface,
+#         (screen_width // 2 - txt_surface.get_width() // 2, screen_height // 2 + 300),
+#     )
+
+#     # 4) Flecha direccional
+#     arrow_dir = "right" if is_mi else "left"
+#     draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), direction=arrow_dir)
+
+#     pygame.display.flip()
+
+# def draw_pretrial_screen_online(mode, elapsed_ms=0, total_ms=2500):
+#     screen.fill(config.black)
+#     draw_fixation_cross(screen_width, screen_height)
+
+#     is_mi = (mode == 0)
+
+#     # ── Figura geométrica grande (igual que offline) ──────────
+#     if is_mi:
+#         draw_arrow_fill(0, screen_width, screen_height, show_threshold=True)
+#     else:
+#         draw_ball_fill(0, screen_width, screen_height, show_threshold=True)
+
+#     # ── Countdown bar ─────────────────────────────────────────
+#     bar_w     = int(screen_width * 0.2)
+#     bar_h     = 12
+#     bar_x     = screen_width // 2 - bar_w // 2
+#     bar_y     = screen_height // 2 + 245
+#     progress  = min(elapsed_ms / total_ms, 1.0)
+#     fill_w    = int(bar_w * progress)
+#     bar_color = (255, 50, 50) if is_mi else (0, 120, 255)
+
+#     pygame.draw.rect(screen, (60, 60, 60),
+#                      (bar_x, bar_y, bar_w, bar_h), border_radius=6)
+#     if fill_w > 0:
+#         if is_mi:
+#             pygame.draw.rect(screen, bar_color,
+#                              (bar_x, bar_y, fill_w, bar_h), border_radius=6)
+#         else:
+#             pygame.draw.rect(screen, bar_color,
+#                              (bar_x + bar_w - fill_w, bar_y, fill_w, bar_h),
+#                              border_radius=6)
+
+#     # ── Indicador pequeño arriba ───────────────────────────────
+#     pos_x = int(screen_width * NEXT_INDICATOR_POS[0])
+#     pos_y = int(screen_height * NEXT_INDICATOR_POS[1])
+#     base_size = int(min(screen_width, screen_height) * 0.08 * NEXT_INDICATOR_SCALE)
+#     next_color = (255, 50, 50) if is_mi else (0, 120, 255)
+
+#     if is_mi:
+#         bg_rect = pygame.Rect(pos_x - base_size // 2, pos_y - base_size // 2,
+#                               base_size, base_size)
+#         pygame.draw.rect(screen, next_color, bg_rect)
+#     else:
+#         pygame.draw.circle(screen, next_color, (pos_x, pos_y), base_size // 2)
+
+#     draw_time_balls(1, screen_width, screen_height, mode="single",
+#                     indicator_color=next_color, single_pos=NEXT_INDICATOR_POS,
+#                     ball_radius=int(base_size * 0.4))
+
+#     # ── Texto ─────────────────────────────────────────────────
+#     font_prep = pygame.font.SysFont(None, 96)
+#     prep_msg  = f"Prepare to close {config.ARM_SIDE.upper()} hand" if is_mi else "Rest"
+#     txt_surface = font_prep.render(prep_msg, True, config.white)
+#     screen.blit(txt_surface,
+#                 (screen_width // 2 - txt_surface.get_width() // 2,
+#                  screen_height // 2 + 300))
+
+#     # ── Flecha direccional ────────────────────────────────────
+#     arrow_dir = "right" if is_mi else "left"
+#     draw_arrow_directional(screen, pos_x, pos_y,
+#                            base_size // 2.5, (255, 255, 255),
+#                            direction=arrow_dir)
+
+#     pygame.display.flip()
+
+def draw_pretrial_screen_online(mode, elapsed_ms=0, total_ms=2500, fill_progress=0.5):
     screen.fill(config.black)
     draw_fixation_cross(screen_width, screen_height)
 
+    is_mi = (mode == 0)
+
+    # === Llenado complementario — igual que show_feedback ===
+    prob = max(0, min(1, fill_progress))
+    fill_correct   = prob          # figura de la clase correcta
+    fill_incorrect = 1 - prob      # figura de la clase incorrecta
+
+    # === Llenado BINARIO — solo una figura a la vez ===
+    if is_mi:
+        mi_fill   = fill_progress  # confianza MI
+        rest_fill = 0.0            # REST siempre vacío en trial MI
+        draw_arrow_fill(mi_fill,   screen_width, screen_height, show_threshold=True)
+        draw_ball_fill(rest_fill,  screen_width, screen_height, show_threshold=True)
+    else:
+        rest_fill = fill_progress  # confianza REST
+        mi_fill   = 0.0            # MI siempre vacío en trial REST
+        draw_ball_fill(rest_fill,  screen_width, screen_height, show_threshold=True)
+        draw_arrow_fill(mi_fill,   screen_width, screen_height, show_threshold=True)
+
+    # ── Countdown bar ─────────────────────────────────────────
+    bar_w    = int(screen_width * 0.3)
+    bar_h    = 12
+    bar_x    = screen_width // 2 - bar_w // 2
+    bar_y    = screen_height // 2 + 245
+    progress = min(elapsed_ms / total_ms, 1.0) if total_ms > 0 else 0
+    fill_w   = int(bar_w * progress)
+    bar_color = (255, 50, 50) if is_mi else (0, 120, 255)
+
+    pygame.draw.rect(screen, (60, 60, 60), (bar_x, bar_y, bar_w, bar_h), border_radius=6)
+    if fill_w > 0:
+        if is_mi:
+            pygame.draw.rect(screen, bar_color, (bar_x, bar_y, fill_w, bar_h), border_radius=6)
+        else:
+            pygame.draw.rect(screen, bar_color, (bar_x + bar_w - fill_w, bar_y, fill_w, bar_h), border_radius=6)
+
+    # ── Indicador pequeño arriba ───────────────────────────────
     pos_x = int(screen_width * NEXT_INDICATOR_POS[0])
     pos_y = int(screen_height * NEXT_INDICATOR_POS[1])
     base_size = int(min(screen_width, screen_height) * 0.08 * NEXT_INDICATOR_SCALE)
-
-    is_mi = (mode == 0)
     next_color = (255, 50, 50) if is_mi else (0, 120, 255)
 
-    # 1) Shape background
     if is_mi:
         bg_rect = pygame.Rect(pos_x - base_size // 2, pos_y - base_size // 2, base_size, base_size)
         pygame.draw.rect(screen, next_color, bg_rect)
     else:
         pygame.draw.circle(screen, next_color, (pos_x, pos_y), base_size // 2)
 
-    # 2) Single time-ball indicator (igual al offline)
-    draw_time_balls(
-        time_ball_state,
-        screen_width,
-        screen_height,
-        mode="single",
-        indicator_color=next_color,
-        single_pos=NEXT_INDICATOR_POS,
-        ball_radius=int(base_size * 0.4),
-    )
+    draw_time_balls(1, screen_width, screen_height, mode="single",
+                    indicator_color=next_color, single_pos=NEXT_INDICATOR_POS,
+                    ball_radius=int(base_size * 0.4))
 
-    # 3) Texto de preparación
+    # ── Texto ─────────────────────────────────────────────────
     font_prep = pygame.font.SysFont(None, 96)
-    if is_mi:
-        prep_msg = f"Prepare to close {config.ARM_SIDE.upper()} hand"
-    else:
-        prep_msg = "Rest"
-
+    prep_msg  = f"Prepare to close {config.ARM_SIDE.upper()} hand" if is_mi else "Rest"
     txt_surface = font_prep.render(prep_msg, True, config.white)
-    screen.blit(
-        txt_surface,
-        (screen_width // 2 - txt_surface.get_width() // 2, screen_height // 2 + 300),
-    )
+    screen.blit(txt_surface, (screen_width // 2 - txt_surface.get_width() // 2, screen_height // 2 + 300))
 
-    # 4) Flecha direccional
+    # ── Flecha direccional ────────────────────────────────────
     arrow_dir = "right" if is_mi else "left"
     draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), direction=arrow_dir)
 
     pygame.display.flip()
-
 
 def main():
     logger.log_event("Resolving EEG data stream via LSL...")
@@ -892,13 +1029,31 @@ def main():
         # 1) Decide modo del trial
         mode = trial_sequence[current_trial]
 
-        # 2) ✅ Pantalla de preparación con el mismo look que OFFLINE
-        draw_pretrial_screen_online(mode=mode, time_ball_state=1)
+        # 2) Trigger de cue PRIMERO — antes de dibujar
+        cue_trig = config.TRIGGERS["MI_PREPARE"] if mode == 0 else config.TRIGGERS["REST_PREPARE"]
+        send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"],
+                        config.UDP_MARKER["PORT"], cue_trig, logger)
 
-        # 3) Waiting / Countdown
+        # 3) Pantalla de preparación DESPUÉS del trigger
+        draw_pretrial_screen_online(mode=mode)
+
+        # 4) Waiting / Countdown + Clasificación durante preparación
         waiting_for_press = True
         countdown_start = None
-        countdown_duration = 1500  # ms
+        countdown_duration = 2500  # ms
+
+        from Utils.experiment_utils import LeakyIntegrator
+        prep_leaky      = LeakyIntegrator(alpha=config.INTEGRATOR_ALPHA)
+        prep_predictions = []
+        prep_all_probs   = []
+        prep_confidence  = 0.0
+        prep_prediction  = None
+        prep_earlystop   = False
+        next_classify_tick = None
+        window_size_samples = int((config.CLASSIFY_WINDOW / 1000) * config.FS)
+        accuracy_threshold  = config.THRESHOLD_MI if mode == 0 else config.THRESHOLD_REST
+        prep_fes_active = False
+
 
         while waiting_for_press:
             eeg_state.update()
@@ -910,47 +1065,200 @@ def main():
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
                         waiting_for_press = False
-            
 
             if config.TIMING:
                 if countdown_start is None:
                     countdown_start = pygame.time.get_ticks()
+                    next_classify_tick = time.time() + config.STEP_SIZE
+
                 elapsed = pygame.time.get_ticks() - countdown_start
 
-                # ✅ Re-dibujar la pantalla de preparación para mantener el indicador visible
-                #    (puedes animar time_ball_state si quieres; aquí lo mantenemos en 1)
-                draw_pretrial_screen_online(mode=mode, time_ball_state=1)
+                # ── Clasificar durante preparación ────────────────
+                if not prep_earlystop and not getattr(config, 'SIMULATION_MODE', False):
+                    now = time.time()
+                    if next_classify_tick and now >= next_classify_tick:
+                        try:
+                            if len(eeg_state.filtered_buffer) >= window_size_samples:
+                                prep_confidence, prep_predictions, prep_all_probs = _RC.classify_real_time(
+                                    eeg_state, window_size_samples,
+                                    prep_all_probs, prep_predictions,
+                                    mode, prep_leaky
+                                )
+                                prep_confidence = prep_leaky.update(prep_confidence)
+
+                            # ── FORZAR PREDICCIÓN PARA PRUEBA SIN GORRA ──
+                            # (fuera del if buffer, siempre se ejecuta)
+                            if getattr(config, 'FORCE_MI_PREDICTION', False) and mode == 0:
+                                prep_confidence = 0.7
+                                prep_predictions.append(200)
+
+                            if len(prep_predictions) >= config.MIN_PREDICTIONS and \
+                               prep_confidence >= accuracy_threshold:
+                                prep_prediction = 200 if mode == 0 else 100
+                                prep_earlystop  = True
+                                logger.log_event(
+                                    f"✅ Prep early stop — "
+                                    f"confidence={prep_confidence:.2f}, "
+                                    f"mode={'MI' if mode==0 else 'REST'}"
+                                )
+                            next_classify_tick += config.STEP_SIZE
+                        except Exception as e:
+                            logger.log_event(f"⚠️ Classify error during prep: {e}")
+
+                draw_pretrial_screen_online(
+                    mode=mode,
+                    elapsed_ms=elapsed,
+                    total_ms=countdown_duration,
+                    fill_progress=prep_confidence
+                )
+
+                # ── Feedback durante preparación (solo MI) ────────────
+                if mode == 0:
+                    fes_should_be_on = prep_confidence >= config.THRESHOLD_MI
+
+                    if getattr(config, 'PREP_FEEDBACK_MODE', 'FES') == 'FES':
+                        if FES_toggle == 1:
+                            if fes_should_be_on and not prep_fes_active:
+                                send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
+                                                config.UDP_FES["PORT"], "FES_SENS_GO",
+                                                logger=logger, quiet=True)
+                                prep_fes_active = True
+                            elif not fes_should_be_on and prep_fes_active:
+                                send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
+                                                config.UDP_FES["PORT"], "FES_STOP",
+                                                logger=logger, quiet=True)
+                                prep_fes_active = False
+
+                    elif getattr(config, 'PREP_FEEDBACK_MODE', 'FES') == 'GLOVE':
+                        if fes_should_be_on:
+                            if arduino:
+                                arduino.write(b'1')
+                                pygame.time.wait(150)
+                                arduino.write(b'0')
+                                logger.log_event("🤚 Glove pulse — prep MI feedback")
+                            prep_fes_active = True
+                        else:
+                            prep_fes_active = False
 
                 if elapsed >= countdown_duration:
                     waiting_for_press = False
             else:
-                # Si no hay timing, igual mantenemos la pantalla
-                draw_pretrial_screen_online(mode=mode, time_ball_state=1)
+                draw_pretrial_screen_online(mode=mode)
 
             clock.tick(60)
+
+        # ── Apagar feedback al terminar preparación ───────────
+        if mode == 0 and prep_fes_active:
+            if getattr(config, 'PREP_FEEDBACK_MODE', 'FES') == 'FES' and FES_toggle == 1:
+                send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
+                                config.UDP_FES["PORT"], "FES_STOP",
+                                logger=logger, quiet=True)
+            # GLOVE no necesita apagado — el pulso ya se cerró solo
+        prep_fes_active = False
+
+        # === Resumen de probabilidades de la fase de preparación ===
+        if prep_all_probs:
+            import numpy as _np
+            _pa = _np.array(prep_all_probs)   # (N, 3): [time, P_rest, P_mi]
+            _p_rest, _p_mi = _pa[:, 1], _pa[:, 2]
+            _label = "MI" if mode == 0 else "REST"
+            logger.log_event(
+                f"[PROBS] {_label} | n={len(_p_mi)} | "
+                f"P(MI):   mean={_p_mi.mean():.3f}  min={_p_mi.min():.3f}  max={_p_mi.max():.3f} | "
+                f"P(REST): mean={_p_rest.mean():.3f}  min={_p_rest.min():.3f}  max={_p_rest.max():.3f} | "
+                f"integrator={prep_confidence:.3f}  earlystop={prep_earlystop}"
+            )
 
         if not running:
             break
 
         mode = trial_sequence[current_trial]
 
-        # 4) Baseline
+        # Baseline
         try:
             eeg_state.compute_baseline(duration_sec=config.BASELINE_DURATION)
         except ValueError:
             continue
 
-        # -----------------------------------------------------------
+        # # -----------------------------------------------------------
+        # # PHASE 1: EFFORT (Sensory FES Only)
+        # # -----------------------------------------------------------
+        # prediction, confidence, leaky_integrator, trial_probs, earlystop_flag = show_feedback(
+        #     duration=config.TIME_MI,
+        #     mode=mode,
+        #     eeg_state=eeg_state
+        # )
+
+        # append_trial_probabilities_to_csv(
+        #     trial_probabilities=trial_probs, mode=mode, trial_number=current_trial + 1,
+        #     predicted_label=prediction, early_cutout=earlystop_flag,
+        #     mi_threshold=config.THRESHOLD_MI, rest_threshold=config.THRESHOLD_REST,
+        #     logger=logger, phase="MI" if mode == 0 else "REST"
+        # )
+
         # PHASE 1: EFFORT (Sensory FES Only)
-        # -----------------------------------------------------------
-        prediction, confidence, leaky_integrator, trial_probs, earlystop_flag = show_feedback(
-            duration=config.TIME_MI,
-            mode=mode,
-            eeg_state=eeg_state
-        )
+        # ── Trigger GO ───────────────────────────────────────────
+        go_trig = config.TRIGGERS["MI_BEGIN"] if mode == 0 else config.TRIGGERS["REST_BEGIN"]
+        send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"],
+                         config.UDP_MARKER["PORT"], go_trig, logger)
+
+        # ── Feedback visual 5s — llenar figura si correcto ───────
+        correct_class = 200 if mode == 0 else 100
+        prediction    = prep_prediction
+        earlystop_flag = prep_earlystop
+
+        # ── Cerrar guante al inicio del feedback si fue correcto (MI) ──
+        if prediction == correct_class and mode == 0:
+            if arduino:
+                arduino.write(b'1')
+                logger.log_event("🤚 Glove closed — feedback reward (5s)")
+            if FES_toggle == 1:
+                send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
+                                config.UDP_FES["PORT"], "FES_MOTOR_GO", logger=logger)
+                logger.log_event("⚡ FES_MOTOR_GO — feedback reward")    
+
+        start_feedback = time.time()
+        clock_fb = pygame.time.Clock()
+        while time.time() - start_feedback < config.TIME_MI:
+            eeg_state.update()
+            progress = (time.time() - start_feedback) / config.TIME_MI
+            screen.fill(config.black)
+            draw_fixation_cross(screen_width, screen_height)
+
+            if prediction == correct_class:
+                if mode == 0:
+                    draw_arrow_fill(progress, screen_width, screen_height, show_threshold=False)
+                    draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
+                else:
+                    draw_ball_fill(progress, screen_width, screen_height, show_threshold=False)
+                    draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
+            else:
+                draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
+                draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
+
+            pygame.display.flip()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+            clock_fb.tick(60)
+
+        # ── Abrir guante al terminar feedback ──────────────────────────
+        if arduino:
+            arduino.write(b'0')
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+            clock_fb.tick(60)
+
+        # Trigger fin
+        end_trig = config.TRIGGERS["MI_END"] if mode == 0 else config.TRIGGERS["REST_END"]
+        send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"],
+                         config.UDP_MARKER["PORT"], end_trig, logger)
 
         append_trial_probabilities_to_csv(
-            trial_probabilities=trial_probs, mode=mode, trial_number=current_trial + 1,
+            trial_probabilities=prep_all_probs, mode=mode,
+            trial_number=current_trial + 1,
             predicted_label=prediction, early_cutout=earlystop_flag,
             mi_threshold=config.THRESHOLD_MI, rest_threshold=config.THRESHOLD_REST,
             logger=logger, phase="MI" if mode == 0 else "REST"
@@ -967,9 +1275,9 @@ def main():
             if prediction == 200:  # SUCCESS (Threshold reached)
 
                 # 1) CLOSE GLOVE (Reward Trigger)
-                if arduino:
-                    arduino.write(b'1')
-                    logger.log_event("✅ Prediction Success -> Closing Glove (Reward)")
+                # if arduino:
+                #     arduino.write(b'1')
+                #     logger.log_event("✅ Prediction Success -> Closing Glove (Reward)")
 
                 # 2) MOTOR FES
                 if FES_toggle:
@@ -977,7 +1285,7 @@ def main():
                         udp_socket_fes,
                         config.UDP_FES["IP"],
                         config.UDP_FES["PORT"],
-                        "FES_MOTOR_GO",
+                        "FES_STOP",
                         logger=logger
                     )
 
@@ -1009,7 +1317,7 @@ def main():
                     messages, colors, [-100, 100],
                     config.TIME_ROB, 0,
                     udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"],
-                    eeg_state, leaky_integrator
+                    eeg_state, prep_leaky
                 )
 
                 # Robot home

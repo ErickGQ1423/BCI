@@ -4,7 +4,14 @@ import matplotlib.pyplot as plt
 
 # === CONFIGURACIÓN ===
 # file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf"
-file_path =  "/home/lab-admin/Documents/CurrentStudy/sub-P009/ses-S001/eeg/sub-P009_ses-S001_task-Default_run-001_eeg.xdf"
+# file_path =  "/home/lab-admin/Documents/CNVStudy/" \
+# "sub-CNV_PILOT_SUBJ_003/ses-S002OFFLINE_NOGLOVE/eeg/" \
+# "sub-CNV_PILOT_SUBJ_003_ses-S002OFFLINE_NOGLOVE_task-Default_run-001_eeg.xdf"
+
+file_path =  "/home/lab-admin/Documents/CurrentStudy/" \
+    "sub-S26CLASS_SUBJ_008/ses-borrar/eeg/" \
+    "sub-S26CLASS_SUBJ_008_ses-borrar_task-Default_run-001_eeg.xdf"
+
 # === CARGA DEL ARCHIVO ===
 streams, header = pyxdf.load_xdf(file_path)
 print(f"Found {len(streams)} streams in the file.\n")
@@ -160,7 +167,7 @@ else:
 # =============================================================
 TOTAL = data.shape[0]
 
-N = 39           # cuántos canales quieres ver
+N = 7           # cuántos canales quieres ver
 FIRST = TOTAL - N
 if FIRST < 0:
     FIRST = 0

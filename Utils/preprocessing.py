@@ -1,8 +1,8 @@
-from scipy.signal import butter, filtfilt, iirnotch, lfilter
+from scipy.signal import butter, filtfilt, iirnotch, lfilter, sosfilt, sosfilt_zi, tf2sos
 import numpy as np
 import config
 from sklearn.linear_model import LinearRegression
-import mne 
+import mne
 
 def concatenate_streams(eeg_streams, marker_streams):
     """
@@ -85,33 +85,23 @@ def select_channels(raw, keep_channels=None):
 
 
 
-def initialize_filter_bank(fs, lowcut, highcut, notch_freqs=[60], notch_q=30, order=4):
+def initialize_filter_bank(fs, lowcut, highcut, notch_freqs=[60], notch_q=30, order=2):
     """
-    Initializes causal filter coefficients for bandpass and notch filters.
-    
-    Parameters:
-        fs (float): Sampling rate in Hz
-        lowcut (float): Low cutoff for bandpass
-        highcut (float): High cutoff for bandpass
-        notch_freqs (list): Frequencies to notch filter (e.g., [60])
-        notch_q (float): Q factor for notch filters
-        order (int): Order for bandpass filter
+    Initializes causal filter coefficients (SOS form) for bandpass and notch filters.
 
     Returns:
-        dict: {'bandpass': (b, a), 'notch': [(b, a), ...]}
+        dict: {'bandpass': sos_array, 'notch': [sos_array, ...]}
     """
-    # Bandpass filter
     nyq = 0.5 * fs
-    bp_b, bp_a = butter(order, [lowcut / nyq, highcut / nyq], btype='band')
+    bp_sos = butter(order, [lowcut / nyq, highcut / nyq], btype='band', output='sos')
 
-    # Notch filters
     notch_filters = []
     for freq in notch_freqs:
         b, a = iirnotch(freq / nyq, notch_q)
-        notch_filters.append((b, a))
+        notch_filters.append(tf2sos(b, a))
 
     return {
-        'bandpass': (bp_b, bp_a),
+        'bandpass': bp_sos,
         'notch': notch_filters
     }
 
@@ -119,7 +109,8 @@ def initialize_filter_bank(fs, lowcut, highcut, notch_freqs=[60], notch_q=30, or
 
 def apply_streaming_filters(data, filter_bank, filter_state=None):
     """
-    Applies notch and bandpass filters in sequence using lfilter with state.
+    Applies notch and bandpass filters in sequence using sosfilt with state.
+    SOS form is numerically stable at very low cutoff frequencies.
 
     Parameters:
         data (ndarray): EEG data (channels x samples)
@@ -132,32 +123,30 @@ def apply_streaming_filters(data, filter_bank, filter_state=None):
     """
     if not isinstance(filter_bank, dict) or 'bandpass' not in filter_bank:
         raise ValueError("Invalid filter_bank: must be a dict with at least 'bandpass' key.")
-    if 'notch' not in filter_bank:
-        print("⚠️ No notch filters found in filter_bank — skipping notch filtering.")
 
     if filter_state is None:
         filter_state = {}
 
     filtered = data
     updated_state = {}
+    n_ch = data.shape[0]
 
-    # --- Apply notch filters (if any) ---
-    for idx, notch_coeffs in enumerate(filter_bank.get('notch', [])):
-        b, a = notch_coeffs
+    # --- Apply notch filters (SOS) ---
+    for idx, notch_sos in enumerate(filter_bank.get('notch', [])):
         key = f'notch_{idx}'
         zi = filter_state.get(key)
         if zi is None:
-            zi = np.zeros((data.shape[0], len(a) - 1))
-        filtered, zf = lfilter(b, a, filtered, axis=1, zi=zi)
+            zi = np.zeros((notch_sos.shape[0], n_ch, 2))
+        filtered, zf = sosfilt(notch_sos, filtered, axis=1, zi=zi)
         updated_state[key] = zf
 
-    # --- Apply bandpass filter ---
-    bp_b, bp_a = filter_bank['bandpass']
+    # --- Apply bandpass filter (SOS) ---
+    bp_sos = filter_bank['bandpass']
     key = 'bandpass'
     zi = filter_state.get(key)
     if zi is None:
-        zi = np.zeros((data.shape[0], len(bp_a) - 1))
-    filtered, zf = lfilter(bp_b, bp_a, filtered, axis=1, zi=zi)
+        zi = np.zeros((bp_sos.shape[0], n_ch, 2))
+    filtered, zf = sosfilt(bp_sos, filtered, axis=1, zi=zi)
     updated_state[key] = zf
 
     return filtered, updated_state

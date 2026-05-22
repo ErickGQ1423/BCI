@@ -98,6 +98,7 @@ except Exception:
 # =========================================================
 _marker_sock = None
 _ROBOT_SOCK = None
+_robot_bind_failed = False  # set True on first failure; prevents retry spam
 
 # Bind robot control socket at import-time (best effort)
 try:
@@ -194,9 +195,11 @@ def _ensure_marker_socket(logger=None):
 
 def _ensure_control_socket(logger=None):
     """Ensure we have a bound control socket; bind now if import-time failed."""
-    global _ROBOT_SOCK
+    global _ROBOT_SOCK, _robot_bind_failed
     if _ROBOT_SOCK is not None:
         return _ROBOT_SOCK
+    if SIMULATION_MODE or _robot_bind_failed:
+        return None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -210,6 +213,7 @@ def _ensure_control_socket(logger=None):
     except Exception as e:
         _udp_log(logger, f"[ERROR] Late bind failed at {_BIND_IP}:{_BIND_PORT}: {e}")
         _ROBOT_SOCK = None
+        _robot_bind_failed = True  # never retry; avoids per-loop error spam
     return _ROBOT_SOCK
 
 def _drain_socket(sock, max_ms: int = 50):

@@ -32,8 +32,8 @@ fes_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 FES_toggle = config.FES_toggle
 
 # --- ARDUINO CONFIG (AGREGADO) ---
-# OPCIÓN A: Usar con Control Panel (Déjala comentada para tu prueba de AHORITA)
-ARDUINO_PORT = os.environ.get("ARDUINO_PORT", "")
+# OPCIÓN A: Env var tiene prioridad; si no está definida, usa config.ARDUINO_PORT
+ARDUINO_PORT = os.environ.get("ARDUINO_PORT", config.ARDUINO_PORT if config.USE_ARDUINO else "")
 
 # OPCIÓN B: Usar Manual desde Terminal (Descomentada AHORA)
 # ARDUINO_PORT = "/dev/ttyACM0"
@@ -55,13 +55,27 @@ logger.save_config_snapshot(config_log_subset)
 
 pygame.init()
 
-if config.BIG_BROTHER_MODE:
-    os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
-    screen = pygame.display.set_mode((1920, 1080), pygame.NOFRAME)
-else:
-    screen = pygame.display.set_mode((0, 0), pygame.NOFRAME)
+# if config.BIG_BROTHER_MODE:
+#     os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
+#     screen = pygame.display.set_mode((1920, 1080), pygame.NOFRAME)
+# else:
+#     screen = pygame.display.set_mode((0, 0), pygame.NOFRAME)
 
-screen_width, screen_height = pygame.display.Info().current_w, pygame.display.Info().current_h
+# screen_width, screen_height = pygame.display.Info().current_w, pygame.display.Info().current_h
+
+# Reemplaza tu bloque actual por este:
+if config.BIG_BROTHER_MODE:
+    # Fuerza una resolución específica sin bordes (útil para setups de monitores múltiples)
+    os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
+    screen = pygame.display.set_mode((3840, 2160), pygame.NOFRAME)
+else:
+    # MODO PANTALLA COMPLETA REAL
+    # (0,0) detecta la resolución nativa de tu monitor actual
+    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+
+# Esto obtiene las dimensiones reales después de activar el modo
+screen_width, screen_height = screen.get_size()
+
 
 # ============================================================
 # ARDUINO SETUP (AGREGADO)
@@ -137,44 +151,78 @@ def display_fixation_period(duration=3):
             if event.type == pygame.QUIT: pygame.quit(); sys.exit()
         clock.tick(60)
 
-def draw_pretrial_screen(next_color, time_ball_state):
-    """Pre-trial with Line+Triangle arrow."""
+def draw_pretrial_screen(next_color, time_ball_state, elapsed_ms=0, total_ms=2000):
+    """Pre-trial with geometric outline and countdown bar."""
     screen.fill(config.black)
     draw_fixation_cross(screen_width, screen_height)
-    
+
+    is_mi = (next_color == (255, 50, 50) or
+             next_color == getattr(config, 'red', (255, 50, 50)))
+
+    # ── Figura geométrica correspondiente ────────────────────
+    if is_mi:
+        draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
+    else:
+        draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
+
+# ── Countdown bar ────────────────────────────────────────
+    bar_w     = int(screen_width * 0.2)
+    bar_h     = 12
+    bar_x     = screen_width // 2 - bar_w // 2
+    bar_y     = screen_height // 2 + 245
+    progress  = min(elapsed_ms / total_ms, 1.0)  # crece de 0 a 1
+    fill_w    = int(bar_w * progress)
+    bar_color = (255, 50, 50) if is_mi else (0, 120, 255)
+
+    # Fondo gris
+    pygame.draw.rect(screen, (60, 60, 60),
+                     (bar_x, bar_y, bar_w, bar_h), border_radius=6)
+
+    if fill_w > 0:
+        if is_mi:
+            # Rojo: se llena de izquierda a derecha
+            pygame.draw.rect(screen, bar_color,
+                             (bar_x, bar_y, fill_w, bar_h),
+                             border_radius=6)
+        else:
+            # Azul: se llena de derecha a izquierda
+            pygame.draw.rect(screen, bar_color,
+                             (bar_x + bar_w - fill_w, bar_y, fill_w, bar_h),
+                             border_radius=6)
+
+    # ── Indicador pequeño arriba (NEXT) ──────────────────────
     pos_x = int(screen_width * NEXT_INDICATOR_POS[0])
     pos_y = int(screen_height * NEXT_INDICATOR_POS[1])
     base_size = int(min(screen_width, screen_height) * 0.08 * NEXT_INDICATOR_SCALE)
-    
-    is_mi = (next_color == (255, 50, 50) or next_color == getattr(config, 'red', (255, 50, 50)))
 
-    # 1. Outer Background (White)
     if is_mi:
-        bg_rect = pygame.Rect(pos_x - base_size//2, pos_y - base_size//2, base_size, base_size)
+        bg_rect = pygame.Rect(pos_x - base_size//2, pos_y - base_size//2,
+                              base_size, base_size)
         pygame.draw.rect(screen, (255, 50, 50), bg_rect)
     else:
         pygame.draw.circle(screen, (0, 120, 255), (pos_x, pos_y), base_size // 2)
 
-    # 2. Middle Color
-    draw_time_balls(time_ball_state, screen_width, screen_height, mode="single", 
-                    indicator_color=next_color, single_pos=NEXT_INDICATOR_POS, ball_radius=int(base_size * 0.4))
-    
-    # Text Section
-    font_prep = pygame.font.SysFont(None, 72) 
-    if is_mi:
-        prep_msg = f"Prepare: Flex {config.ARM_SIDE.upper()} Hand"
-    else:
-        prep_msg = "Rest"
-    
+    draw_time_balls(time_ball_state, screen_width, screen_height,
+                    mode="single", indicator_color=next_color,
+                    single_pos=NEXT_INDICATOR_POS,
+                    ball_radius=int(base_size * 0.4))
+
+    # ── Texto ────────────────────────────────────────────────
+    font_prep = pygame.font.SysFont(None, 72)
+    prep_msg  = f"Prepare: Flex {config.ARM_SIDE.upper()} Hand" if is_mi else "Rest"
     txt_surface = font_prep.render(prep_msg, True, config.white)
-    screen.blit(txt_surface, (screen_width // 2 - txt_surface.get_width() // 2, screen_height // 2 + 300))
+    screen.blit(txt_surface,
+                (screen_width // 2 - txt_surface.get_width() // 2,
+                 screen_height // 2 + 300))
 
-    # 3. Directional Arrow (Line + Triangle)
+    # ── Flecha direccional ───────────────────────────────────
     arrow_dir = "right" if is_mi else "left"
-    draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), direction=arrow_dir)
-    
-    pygame.display.flip()
+    draw_arrow_directional(screen, pos_x, pos_y,
+                           base_size // 2.5, (255, 255, 255),
+                           direction=arrow_dir)
 
+    pygame.display.flip()
+            
 def show_feedback(duration, mode):
     """Feedback phase keeping the arrow for continuity."""
     start_time = time.time()
@@ -204,7 +252,9 @@ def show_feedback(duration, mode):
                              pos_y - int(base_size*0.35), int(base_size*0.7), int(base_size*0.7)))
             # Keep Arrow
             draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), "right")
-            msg = f"Imagine Closing {config.ARM_SIDE.upper()} Hand"
+            #msg = f"Imagine Closing {config.ARM_SIDE.upper()} Hand"
+            msg = f"Close {config.ARM_SIDE.upper()} Hand"
+
         else: # REST
             draw_ball_fill(progress, screen_width, screen_height, False)
             # Maintain Visual Identity (Circle)
@@ -240,18 +290,19 @@ try:
         next_color = (255, 50, 50) if next_mode == 0 else (0, 120, 255)
 
         # PRE-TRIAL
-        draw_pretrial_screen(next_color, time_ball_state=1)
-        
-        backdoor_mode, waiting = None, True
         countdown_start = pygame.time.get_ticks()
+        backdoor_mode, waiting = None, True
+
         while waiting:
+            elapsed = pygame.time.get_ticks() - countdown_start
             for event in pygame.event.get():
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_RIGHT: backdoor_mode = 0; waiting = False
-                    if event.key == pygame.K_DOWN: backdoor_mode = 1; waiting = False
-            if config.TIMING and (pygame.time.get_ticks() - countdown_start >= 2000):
+                    if event.key == pygame.K_DOWN:  backdoor_mode = 1; waiting = False
+            if config.TIMING and elapsed >= 2000:
                 waiting = False
-            draw_pretrial_screen(next_color, time_ball_state=1)
+            draw_pretrial_screen(next_color, time_ball_state=1,
+                                 elapsed_ms=elapsed, total_ms=2000)
             clock.tick(60)
 
         mode = backdoor_mode if backdoor_mode is not None else next_mode

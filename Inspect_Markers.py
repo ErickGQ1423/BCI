@@ -58,8 +58,8 @@ def build_series_aligned(events, t0, FS, N):
 def plot_dual_trigger_series_aligned(xdf_path):
     print(f"📂 Analizando: {os.path.basename(xdf_path)}")
 
-    main_ids = {100, 120}
-    aux_ids  = {200, 220}
+    main_ids = {100, 110, 120}
+    aux_ids  = {200, 210, 220}
 
     main_events = extract_triggers(xdf_path, main_ids)
     aux_events  = extract_triggers(xdf_path, aux_ids)
@@ -118,5 +118,7 @@ if __name__ == "__main__":
     #    "/home/lab-admin/BCI_project/CurrentStudy/sub-Prueba/training_data/"
     #    "sub-CLASS_SUBJ_1032_ses-S001OFFLINE_FES_task-Default_run-001_eeg.xdf"
     #)
-    XDF_FILE = ("/home/lab-admin/Documents/CurrentStudy/sub-LAB_SUBJ_001/ses-S001OFFLINE/eeg/sub-LAB_SUBJ_001_ses-S001OFFLINE_task-Default_run-001_eeg.xdf")
+    XDF_FILE = ("/home/lab-admin/Documents/CurrentStudy/" \
+    "sub-S26CLASS_SUBJ_008/ses-borrar/eeg/" \
+    "sub-S26CLASS_SUBJ_008_ses-borrar_task-Default_run-001_eeg.xdf")
     plot_dual_trigger_series_aligned(XDF_FILE)

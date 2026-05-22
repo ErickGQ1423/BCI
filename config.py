@@ -11,15 +11,18 @@
 WORKING_DIR = "/home/lab-admin/BCI_project/BCI"
 DATA_DIR = "/home/lab-admin/Documents/CurrentStudy"
 SIMULATION_MODE = True
-TRAINING_SUBJECT = "Prueba"
+TRAINING_SUBJECT = "CNV_PILOT_SUBJ_011"
 # EEG Settings
 CAP_TYPE = 32  
-LOWCUT = 8  # Hz
-HIGHCUT = 13  # Hz
+LOWCUT = 0.1  # Hz
+HIGHCUT = 1.0  # Hz
 LOWCUT_ERRP = 1 #Hz
 HIGHCUT_ERRP = 10 #Hz
 FS = 512  # Sampling frequency (Hz)
-MOTOR_CHANNEL_NAMES = ['FC1','FC2','C3', 'Cz', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P7','P3', 'Pz', 'P4', 'P8', 'POz']
+#MOTOR_CHANNEL_NAMES = ['FC1','FC2','C3', 'Cz', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P7','P3', 'Pz', 'P4', 'P8', 'POz']
+#MOTOR_CHANNEL_NAMES = ['FC5', 'FC1', 'C3', 'Cz', 'CP5', 'CP1', 'Fz']
+MOTOR_CHANNEL_NAMES = ['FC5', 'C3', 'Cz', 'CP1', 'Fz']
+
 ERRP_CHANNEL_NAMES = ['F3', 'Fz', 'F4', 'FC1', 'FC2', 'Cz']
 EOG_CHANNEL_NAMES = ['AUX1'] # List of EOG channel names to use
 EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = disabled)
@@ -28,7 +31,7 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 10   # Total number of trialsB
+TOTAL_TRIALS = 30   # Total number of trials
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
@@ -37,8 +40,8 @@ TIME_ROB =  5# time allocated for robot to move
 TIME_STATIONARY = 1 # time for stationary feedback after no movement/failed movement trial
 TIME_MASTER_MOVE = 5 # allowed timing for participant to position robot with master arm. Bimanual experiment.
 TIMING = True #obsolete
-SHAPE_MAX = 0.7 #maximum fill 
-SHAPE_MIN = 0.5 #minimum fill 
+SHAPE_MAX = 0.7 #maximum fill
+SHAPE_MIN = 0.3 #minimum fill
 ROBOT_TRAJECTORY = ["a"] # Not using
 BIG_BROTHER_MODE = True #this toggle exports the game to the second monitor automatically, while retaining the running log in the first windows linux terminal
 SEND_PROBS = False
@@ -50,18 +53,18 @@ EARLYSTOP_MODE = "correct_only"
 
 
 # Classification Parameters
-CLASSIFY_WINDOW = 1000  # Duration of EEG data window for classification (milliseconds)
-FILTER_BUFFER_SIZE = 2048 #4s at 512 Hz
+CLASSIFY_WINDOW = 2500  # Duration of EEG data window for classification (milliseconds)
+FILTER_BUFFER_SIZE = 3072 #6s at 512 Hz
 BASELINE_DURATION = 1 #seconds
 ACCURACY_THRESHOLD = 0.6  # OBS Accuracy threshold to determine "Correct" (plan to obsolete)
-THRESHOLD_MI = 0.6 #Threshold for MI "correct"
-THRESHOLD_REST = 0.6 #Threshold for REST "Correct"
+THRESHOLD_MI = 0.5 #Threshold for MI "correct"
+THRESHOLD_REST = 0.5 #Threshold for REST "Correct"
 RELAXATION_RATIO = 0.0 # relaxation ratio for sustained MI during movement
 MIN_PREDICTIONS = 8 # Min number of predictions during Online experiment before the decoder can end early
 STEP_SIZE = 1/16
 CLASSIFICATION_OFFSET = 0 # Offset for "classification window" starting point
-#CLASSIFICATION_SCHEME_OPT = "TIMESERIES"
-CLASSIFICATION_SCHEME_OPT = "FREQUENCY"
+CLASSIFICATION_SCHEME_OPT = "TIMESERIES"
+#CLASSIFICATION_SCHEME_OPT = "FREQUENCY"
 SURFACE_LAPLACIAN_TOGGLE = 0 #apply the surface laplacian spatial filter during online
 SELECT_MOTOR_CHANNELS = 1 # toggle to select motor channels or not (can be used to select other channels too)
 SELECT_ERRP_CHANNELS = 0 #toggle to select ERRP channels
@@ -81,6 +84,12 @@ FES_toggle = 0
 FES_CHANNEL = "red"
 FES_TIMING_OFFSET = 7 
 # above for motor FES, cut out X seconds before the full duration of movement. This should represent when the robot will naturally reach the end of motion (in successful case)
+
+# Feedback mode durante preparación: "FES" o "GLOVE"
+PREP_FEEDBACK_MODE = "FES"  # cambiar a "FES" o "GLOVE" para usar estimulación
+
+FORCE_MI_PREDICTION = False  # ← poner False cuando uses gorra real
+
 
 # Screen Dimensions
 #SCREEN_WIDTH = 3840
@@ -103,7 +112,7 @@ orange = (255, 165, 0)
 # software triggers
 TRIGGERS = {
     "MI_BEGIN": "200",
-    #"MI_PREPARE": "210",
+    "MI_PREPARE": "210",
     "MI_END": "220",
     "MI_EARLYSTOP": "240",
     "MI_PROBS": "2000",
@@ -131,7 +140,7 @@ TRIGGERS = {
     
     
     "REST_BEGIN": "100",
-    #"REST_PREPARE": "110",
+    "REST_PREPARE": "110",
     "REST_END": "120",
     "REST_EARLYSTOP": "140",
     "REST_PROBS": "1000",
@@ -192,4 +201,4 @@ ARDUINO_BAUD = 9600         # Arduino communication baud rate
 ARDUINO_CMD_MI   = b"1"     # Movement detected (label 200)
 ARDUINO_CMD_REST = b"0"     # Rest or ambiguous state detected
 
-SIMULATION_MODE = True      # Run system in simulation mode
+SIMULATION_MODE = True

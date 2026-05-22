@@ -49,6 +49,11 @@ ENV/
 *.sav
 *.npz
 
+# Datos EEG grandes
+*.fif
+*.edf
+BCI_project/
+
 # Logs y temporales
 *.log
 *.tmp
