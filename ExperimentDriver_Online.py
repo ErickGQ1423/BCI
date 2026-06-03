@@ -260,7 +260,7 @@
 #     display_fixation_period(duration=3, eeg_state=eeg_state)
 
 #     # Ensure glove is open at start
-#     if arduino: arduino.write(b'0')
+#     if arduino: arduino_write(b'0')
 
 #     while running and current_trial < len(trial_sequence):
 #         logger.log_event(f"--- Trial {current_trial+1}/{len(trial_sequence)} START ---")
@@ -348,7 +348,7 @@
                 
 #                 # 1. CLOSE GLOVE (Reward Trigger)
 #                 if arduino: 
-#                     arduino.write(b'1')
+#                     arduino_write(b'1')
 #                     logger.log_event("✅ Prediction Success -> Closing Glove (Reward)")
 
 #                 # 2. MOTOR FES
@@ -380,21 +380,21 @@
                 
 #             else: # FAIL (Threshold not reached)
 #                 # Glove remains open
-#                 if arduino: arduino.write(b'0')
+#                 if arduino: arduino_write(b'0')
 #                 display_multiple_messages_with_udp(["Incorrect", "Hand Stationary"], [config.red, config.white], [-100, 100], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger, eeg_state)
 
 #         else: # REST Trial
 #             msg_txt = "Correct" if prediction == 100 else "Incorrect"
 #             col = config.green if prediction == 100 else config.red
 #             # Ensure glove is open
-#             if arduino: arduino.write(b'0')
+#             if arduino: arduino_write(b'0')
 #             display_multiple_messages_with_udp([msg_txt, "Hand Stationary"], [col, config.white], [-100, 100], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger, eeg_state)
 
 #         # -----------------------------------------------------------
 #         # PHASE 3: RELAXATION (End of Trial)
 #         # -----------------------------------------------------------
 #         # Open glove for the next trial
-#         if arduino: arduino.write(b'0')
+#         if arduino: arduino_write(b'0')
 
 #         display_fixation_period(duration=3, eeg_state=eeg_state)
 #         current_trial += 1
@@ -406,7 +406,7 @@
 #     log_confusion_matrix_from_trial_summary(logger)
     
 #     if arduino: 
-#         arduino.write(b'0')
+#         arduino_write(b'0')
 #         arduino.close()
         
 #     pygame.quit()
@@ -473,7 +473,7 @@
 #     display_fixation_period(duration=3, eeg_state=eeg_state)
 
 #     # Ensure glove is open at start
-#     if arduino: arduino.write(b'0')
+#     if arduino: arduino_write(b'0')
 
 #     while running and current_trial < len(trial_sequence):
 #         logger.log_event(f"--- Trial {current_trial+1}/{len(trial_sequence)} START ---")
@@ -561,7 +561,7 @@
                 
 #                 # 1. CLOSE GLOVE (Reward Trigger)
 #                 if arduino: 
-#                     arduino.write(b'1')
+#                     arduino_write(b'1')
 #                     logger.log_event("✅ Prediction Success -> Closing Glove (Reward)")
 
 #                 # 2. MOTOR FES
@@ -593,21 +593,21 @@
                 
 #             else: # FAIL (Threshold not reached)
 #                 # Glove remains open
-#                 if arduino: arduino.write(b'0')
+#                 if arduino: arduino_write(b'0')
 #                 display_multiple_messages_with_udp(["Incorrect", "Hand Stationary"], [config.red, config.white], [-100, 100], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger, eeg_state)
 
 #         else: # REST Trial
 #             msg_txt = "Correct" if prediction == 100 else "Incorrect"
 #             col = config.green if prediction == 100 else config.red
 #             # Ensure glove is open
-#             if arduino: arduino.write(b'0')
+#             if arduino: arduino_write(b'0')
 #             display_multiple_messages_with_udp([msg_txt, "Hand Stationary"], [col, config.white], [-100, 100], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger, eeg_state)
 
 #         # -----------------------------------------------------------
 #         # PHASE 3: RELAXATION (End of Trial)
 #         # -----------------------------------------------------------
 #         # Open glove for the next trial
-#         if arduino: arduino.write(b'0')
+#         if arduino: arduino_write(b'0')
 
 #         display_fixation_period(duration=3, eeg_state=eeg_state)
 #         current_trial += 1
@@ -619,7 +619,7 @@
 #     log_confusion_matrix_from_trial_summary(logger)
     
 #     if arduino: 
-#         arduino.write(b'0')
+#         arduino_write(b'0')
 #         arduino.close()
         
 #     pygame.quit()
@@ -704,7 +704,7 @@ monitor_h = info_monitor.current_h
 
 if config.BIG_BROTHER_MODE:
     os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
-    screen = pygame.display.set_mode((1920, 1080),pygame.NOFRAME)
+    screen = pygame.display.set_mode((3840, 2160),pygame.NOFRAME)
     # Si tú quieres forzar 1920x1080 aquí, lo puedes hacer,
     # pero para que el indicador se vea proporcional, lo dejamos dinámico:
     screen_width = monitor_w
@@ -746,6 +746,14 @@ if ARDUINO_PORT:
 else:
     logger.log_event("ℹ️ No Arduino port configured.")
 
+def arduino_write(cmd: bytes):
+    if arduino is None:
+        return
+    try:
+        arduino.write(cmd)
+    except Exception as e:
+        logger.log_event(f"⚠️ Arduino write failed: {e}")
+
 # Load Model
 subject_model_dir = os.path.join(config.DATA_DIR, f"sub-{config.TRAINING_SUBJECT}", "models")
 subject_model_path = os.path.join(subject_model_dir, f"sub-{config.TRAINING_SUBJECT}_model.pkl")
@@ -753,11 +761,25 @@ subject_model_path = os.path.join(subject_model_dir, f"sub-{config.TRAINING_SUBJ
 try:
     with open(subject_model_path, 'rb') as f:
         model_pkg = pickle.load(f)
-    model    = model_pkg['model']
-    template = model_pkg.get('template', None)
-    model_type = model_pkg.get('model_type', 'MDM')
-    logger.log_event(f"✅ Model loaded: {subject_model_path}")
-    logger.log_event(f"   Model type: {model_type} | classes: {model.classes_}")
+    model_type = model_pkg.get('model_type', 'unknown')
+
+    if model_type == 'M2_LDA_shrink_MDM':
+        model    = None
+        template = None
+        _calib = model_pkg.get('subject_calib')
+        _calib_sess = model_pkg.get('session_calib', '')
+        _calib_info = f"+ {_calib.split('_')[-1]}/{_calib_sess}" if _calib else "(MAESTRO — sin calibración)"
+        logger.log_event(f"✅ Model loaded: {subject_model_path}")
+        logger.log_event(f"   Tipo: M2 cross-subject | "
+                         f"pasos={model_pkg['n_timepoints']} | "
+                         f"canales={model_pkg['picks']} | "
+                         f"entrenado con: {[s.split('_')[-1] for s in model_pkg['subjects_train']]} "
+                         f"{_calib_info}")
+    else:
+        model    = model_pkg['model']
+        template = model_pkg.get('template', None)
+        logger.log_event(f"✅ Model loaded: {subject_model_path}")
+        logger.log_event(f"   Model type: {model_type} | classes: {model.classes_}")
 except FileNotFoundError:
     logger.log_event(f"❌ Model not found: {subject_model_path}", level="error")
     sys.exit(1)
@@ -767,11 +789,12 @@ ground_truth_list = []
 # ============================================================
 # WIRE RUNTIME OBJECTS
 # ============================================================
-_RC.config = config
-_RC.logger = logger
-_RC.model = model
-_RC.screen = screen
-_RC.template = template   # ← agrega esta línea
+_RC.config    = config
+_RC.logger    = logger
+_RC.model     = model
+_RC.model_pkg = model_pkg if model_type == 'M2_LDA_shrink_MDM' else None
+_RC.screen    = screen
+_RC.template  = template
 _RC.screen_width = screen_width
 _RC.screen_height = screen_height
 _RC.udp_socket_marker = udp_socket_marker
@@ -1021,7 +1044,7 @@ def main():
 
     # Ensure glove is open at start
     if arduino:
-        arduino.write(b'0')
+        arduino_write(b'0')
 
     while running and current_trial < len(trial_sequence):
         logger.log_event(f"--- Trial {current_trial+1}/{len(trial_sequence)} START ---")
@@ -1049,6 +1072,7 @@ def main():
         prep_confidence  = 0.0
         prep_prediction  = None
         prep_earlystop   = False
+        prep_earlystop_elapsed = None
         next_classify_tick = None
         window_size_samples = int((config.CLASSIFY_WINDOW / 1000) * config.FS)
         accuracy_threshold  = config.THRESHOLD_MI if mode == 0 else config.THRESHOLD_REST
@@ -1070,6 +1094,18 @@ def main():
                 if countdown_start is None:
                     countdown_start = pygame.time.get_ticks()
                     next_classify_tick = time.time() + config.STEP_SIZE
+                    # M2: capturar epoch completo (2.5s pre-trigger ya en buffer)
+                    if _RC.model_pkg is not None:
+                        try:
+                            _buf, _ = eeg_state.get_baseline_corrected_window(
+                                window_size_samples)
+                        except Exception:
+                            _buf = None
+                        _RC.prep_epoch    = _buf
+                        _RC.m2_ch_idx     = None
+                        _RC._m2_last_step = -1
+                        _RC._m2_lda_probs = []
+                        _RC._m2_mdm_probs = []
 
                 elapsed = pygame.time.get_ticks() - countdown_start
 
@@ -1079,12 +1115,19 @@ def main():
                     if next_classify_tick and now >= next_classify_tick:
                         try:
                             if len(eeg_state.filtered_buffer) >= window_size_samples:
-                                prep_confidence, prep_predictions, prep_all_probs = _RC.classify_real_time(
+                                raw_confidence, prep_predictions, prep_all_probs = _RC.classify_real_time(
                                     eeg_state, window_size_samples,
                                     prep_all_probs, prep_predictions,
-                                    mode, prep_leaky
+                                    mode, prep_leaky,
+                                    elapsed_ms=elapsed
                                 )
-                                prep_confidence = prep_leaky.update(prep_confidence)
+                                prep_confidence = prep_leaky.update(raw_confidence)
+                                # Option B: FES on first individual step with correct raw prediction
+                                if mode == 0 and FES_toggle == 1 and not prep_fes_active:
+                                    if raw_confidence > config.THRESHOLD_MI:
+                                        send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
+                                                         config.UDP_FES["PORT"], "FES_SENS_GO", logger=logger)
+                                        prep_fes_active = True
 
                             # ── FORZAR PREDICCIÓN PARA PRUEBA SIN GORRA ──
                             # (fuera del if buffer, siempre se ejecuta)
@@ -1096,6 +1139,8 @@ def main():
                                prep_confidence >= accuracy_threshold:
                                 prep_prediction = 200 if mode == 0 else 100
                                 prep_earlystop  = True
+                                if prep_earlystop_elapsed is None:
+                                    prep_earlystop_elapsed = elapsed
                                 logger.log_event(
                                     f"✅ Prep early stop — "
                                     f"confidence={prep_confidence:.2f}, "
@@ -1105,40 +1150,32 @@ def main():
                         except Exception as e:
                             logger.log_event(f"⚠️ Classify error during prep: {e}")
 
+                # Animate bar to 1.0 after early stop (motivational)
+                if prep_earlystop and prep_earlystop_elapsed is not None:
+                    remaining = max(1, countdown_duration - prep_earlystop_elapsed)
+                    t_anim = min(1.0, (elapsed - prep_earlystop_elapsed) / remaining)
+                    fill_display = prep_confidence + (1.0 - prep_confidence) * t_anim
+                else:
+                    fill_display = prep_confidence
                 draw_pretrial_screen_online(
                     mode=mode,
                     elapsed_ms=elapsed,
                     total_ms=countdown_duration,
-                    fill_progress=prep_confidence
+                    fill_progress=fill_display
                 )
 
                 # ── Feedback durante preparación (solo MI) ────────────
-                if mode == 0:
+                if mode == 0 and getattr(config, 'PREP_FEEDBACK_MODE', 'FES') == 'GLOVE':
                     fes_should_be_on = prep_confidence >= config.THRESHOLD_MI
-
-                    if getattr(config, 'PREP_FEEDBACK_MODE', 'FES') == 'FES':
-                        if FES_toggle == 1:
-                            if fes_should_be_on and not prep_fes_active:
-                                send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
-                                                config.UDP_FES["PORT"], "FES_SENS_GO",
-                                                logger=logger, quiet=True)
-                                prep_fes_active = True
-                            elif not fes_should_be_on and prep_fes_active:
-                                send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
-                                                config.UDP_FES["PORT"], "FES_STOP",
-                                                logger=logger, quiet=True)
-                                prep_fes_active = False
-
-                    elif getattr(config, 'PREP_FEEDBACK_MODE', 'FES') == 'GLOVE':
-                        if fes_should_be_on:
-                            if arduino:
-                                arduino.write(b'1')
-                                pygame.time.wait(150)
-                                arduino.write(b'0')
-                                logger.log_event("🤚 Glove pulse — prep MI feedback")
-                            prep_fes_active = True
-                        else:
-                            prep_fes_active = False
+                    if fes_should_be_on:
+                        if arduino:
+                            arduino_write(b'1')
+                            pygame.time.wait(150)
+                            arduino_write(b'0')
+                            logger.log_event("🤚 Glove pulse — prep MI feedback")
+                        prep_fes_active = True
+                    else:
+                        prep_fes_active = False
 
                 if elapsed >= countdown_duration:
                     waiting_for_press = False
@@ -1155,6 +1192,28 @@ def main():
                                 logger=logger, quiet=True)
             # GLOVE no necesita apagado — el pulso ya se cerró solo
         prep_fes_active = False
+
+        # === Resumen M2 ambos modelos (M2 mode) ===
+        if _RC.model_pkg is not None and _RC._m2_lda_probs:
+            _label         = "MI" if mode == 0 else "REST"
+            _earlystop_step = _RC._m2_last_step + 1 if prep_earlystop else "—"
+            logger.log_event(
+                f"[TRIAL_SUMMARY] {_label} | trial={current_trial+1} | "
+                f"early_stop={prep_earlystop} (paso {_earlystop_step})"
+            )
+            logger.log_event(
+                f"  MDM (decisión)   : {_RC._m2_mdm_probs}"
+            )
+            logger.log_event(
+                f"  LDA (validación) : {_RC._m2_lda_probs}"
+            )
+            _RC._m2_mdm_probs = []
+            _RC._m2_lda_probs = []
+            _RC._m2_last_step = -1
+
+        # Actualizar recentering Riemanniano M2 con el epoch de este trial
+        if _RC.model_pkg is not None:
+            _RC.update_m2_recentering()
 
         # === Resumen de probabilidades de la fase de preparación ===
         if prep_all_probs:
@@ -1210,7 +1269,7 @@ def main():
         # ── Cerrar guante al inicio del feedback si fue correcto (MI) ──
         if prediction == correct_class and mode == 0:
             if arduino:
-                arduino.write(b'1')
+                arduino_write(b'1')
                 logger.log_event("🤚 Glove closed — feedback reward (5s)")
             if FES_toggle == 1:
                 send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
@@ -1244,7 +1303,7 @@ def main():
 
         # ── Abrir guante al terminar feedback ──────────────────────────
         if arduino:
-            arduino.write(b'0')
+            arduino_write(b'0')
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -1276,18 +1335,8 @@ def main():
 
                 # 1) CLOSE GLOVE (Reward Trigger)
                 # if arduino:
-                #     arduino.write(b'1')
+                #     arduino_write(b'1')
                 #     logger.log_event("✅ Prediction Success -> Closing Glove (Reward)")
-
-                # 2) MOTOR FES
-                if FES_toggle:
-                    send_udp_message(
-                        udp_socket_fes,
-                        config.UDP_FES["IP"],
-                        config.UDP_FES["PORT"],
-                        "FES_STOP",
-                        logger=logger
-                    )
 
                 # 3) ROBOT
                 messages = ["Correct", "Hand close"]
@@ -1332,7 +1381,7 @@ def main():
 
             else:  # FAIL (Threshold not reached)
                 if arduino:
-                    arduino.write(b'0')
+                    arduino_write(b'0')
                 display_multiple_messages_with_udp(
                     ["Incorrect", "Hand Stationary"],
                     [config.red, config.white],
@@ -1350,7 +1399,7 @@ def main():
             msg_txt = "Correct" if prediction == 100 else "Incorrect"
             col = config.green if prediction == 100 else config.red
             if arduino:
-                arduino.write(b'0')
+                arduino_write(b'0')
             display_multiple_messages_with_udp(
                 [msg_txt, "Hand Stationary"],
                 [col, config.white],
@@ -1368,7 +1417,7 @@ def main():
         # PHASE 3: RELAXATION (End of Trial)
         # -----------------------------------------------------------
         if arduino:
-            arduino.write(b'0')
+            arduino_write(b'0')
 
         display_fixation_period(duration=3, eeg_state=eeg_state)
         current_trial += 1
@@ -1380,7 +1429,7 @@ def main():
     log_confusion_matrix_from_trial_summary(logger)
 
     if arduino:
-        arduino.write(b'0')
+        arduino_write(b'0')
         arduino.close()
 
     pygame.quit()

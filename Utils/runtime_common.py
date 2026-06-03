@@ -625,7 +625,19 @@ from Utils.networking import send_udp_message, display_multiple_messages_with_ud
 config = None
 logger = None
 model = None
-template = None  # ← agrega esta línea
+template = None
+
+# M2 cross-subject model state
+model_pkg       = None   # full model package (M2_LDA_shrink_MDM format)
+prep_epoch      = None   # epoch buffer captured at trial start (n_ch, n_samples)
+m2_ch_idx       = None   # channel indices for model picks in live stream
+_m2_last_step   = -1     # last M2 step logged (avoid duplicate logs per step)
+_m2_lda_probs   = []     # LDA P(MI) per step — accumulated for end-of-trial summary
+_m2_mdm_probs   = []     # MDM confidence per step — accumulated for end-of-trial summary
+
+# M2 Riemannian recentering state (one Prev_T per time step)
+m2_prev_T       = None   # list[ndarray] of size n_timepoints; None until first trial
+m2_rec_counter  = 0      # trials seen — controls geodesic alpha = 1/(counter+1)
 
 # Surfaces/screen geometry used by draw helpers
 screen = None
@@ -883,17 +895,103 @@ def handle_fes_activation(mode, running_avg_confidence, fes_active):
     return fes_active
 
 
-def classify_real_time(eeg_state, window_size_samples, all_probabilities, predictions, mode, leaky_integrator, update_recentering=True):
-    global counter
-    global Prev_T
+def classify_real_time(eeg_state, window_size_samples, all_probabilities, predictions,
+                       mode, leaky_integrator, update_recentering=True, elapsed_ms=None):
+    global counter, Prev_T
+    global m2_ch_idx, _m2_last_step, _m2_lda_probs, _m2_mdm_probs
 
     pygame.display.flip()
     pygame.event.get()  # Heartbeat to OS
 
+    # ── M2 cross-subject mode ─────────────────────────────────
+    if model_pkg is not None and model_pkg.get('model_type') == 'M2_LDA_shrink_MDM':
+        if prep_epoch is None:
+            return leaky_integrator.accumulated_probability, predictions, all_probabilities
+
+        # Lazy init: find channel indices in live stream
+        if m2_ch_idx is None:
+            if eeg_state.channel_names:
+                picks = model_pkg['picks']
+                m2_ch_idx = [list(eeg_state.channel_names).index(ch)
+                              for ch in picks
+                              if ch in eeg_state.channel_names]
+
+        if not m2_ch_idx:
+            return leaky_integrator.accumulated_probability, predictions, all_probabilities
+
+        n_steps   = model_pkg['n_timepoints']
+        step      = min(int((elapsed_ms or 0) / 250), n_steps - 1)
+        REST_ID   = model_pkg['REST_ID']
+        MI_ID     = model_pkg['MI_ID']
+
+        # Sample indices within the 2.5s epoch window
+        n_samp    = prep_epoch.shape[1]
+        all_t_idx = np.linspace(0, n_samp - 1, n_steps).astype(int)
+
+        # Extract channels from captured epoch
+        epoch_ch  = prep_epoch[m2_ch_idx, :]   # (3, n_samp)
+
+        # ── MDM — decision (con recentering Riemanniano si disponible) ──
+        mdm_confidence = 0.5
+        try:
+            mdm_model    = model_pkg['mdm_models'][step]
+            mdm_template = model_pkg['mdm_templates'][step]
+            t_end        = all_t_idx[step] + 1
+            raw_step     = epoch_ch[:, :t_end]
+            tmpl_cut     = mdm_template[:, :t_end]
+            extended     = np.concatenate([raw_step, tmpl_cut], axis=0)
+            raw_cov      = extended @ extended.T
+            tr           = np.trace(raw_cov)
+            if tr > 1e-12 and np.isfinite(tr):
+                cov_norm = raw_cov / tr
+                # Riemannian recentering: whiten relative to running mean
+                if (m2_prev_T is not None
+                        and step < len(m2_prev_T)
+                        and m2_prev_T[step] is not None):
+                    T_inv    = invsqrtm(m2_prev_T[step])
+                    cov_norm = T_inv @ cov_norm @ T_inv.T
+                cov    = cov_norm + model_pkg['cov_reg'] * np.eye(cov_norm.shape[0])
+                cov    = np.expand_dims(cov, 0)
+                mi_col = list(mdm_model.classes_).index(MI_ID)
+                proba  = mdm_model.predict_proba(cov)[0]
+                mdm_confidence = float(proba[mi_col]) if mode == 0 \
+                                 else float(1.0 - proba[mi_col])
+        except Exception:
+            pass
+
+        # ── Acumular y loguear una vez por paso ───────────────
+        if step != _m2_last_step:
+            _m2_last_step = step
+            # LDA
+            try:
+                lda_model  = model_pkg['skl_models'][step]
+                t_idx      = all_t_idx[:step + 1]
+                features   = epoch_ch[:, t_idx].flatten().reshape(1, -1)
+                p_lda      = lda_model.predict_proba(features)[0]
+                mi_idx_lda = list(lda_model.classes_).index(MI_ID)
+                p_lda_mi   = float(p_lda[mi_idx_lda])
+            except Exception:
+                p_lda_mi = 0.5
+            _m2_lda_probs.append(round(p_lda_mi, 3))
+            _m2_mdm_probs.append(round(mdm_confidence, 3))
+            if logger:
+                logger.log_event(
+                    f"[M2_step] paso={step+1:02d}/{n_steps} "
+                    f"t={model_pkg['t_points'][step]:+.2f}s  "
+                    f"MDM={mdm_confidence:.3f}  LDA={p_lda_mi:.3f}"
+                )
+
+        predicted_label = 200 if mdm_confidence >= 0.5 else 100
+        predictions.append(predicted_label)
+        all_probabilities.append([time.time(), 1.0 - mdm_confidence, mdm_confidence])
+        return mdm_confidence, predictions, all_probabilities
+
+    # ── Legacy mode ───────────────────────────────────────────
     try:
         window, _ = eeg_state.get_baseline_corrected_window(window_size_samples)
     except ValueError:
         return leaky_integrator.accumulated_probability, predictions, all_probabilities
+
 
     if not np.isfinite(window).all():
         return leaky_integrator.accumulated_probability, predictions, all_probabilities
@@ -963,6 +1061,62 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
     all_probabilities.append([time.time(), probabilities[0], probabilities[1]])
 
     return current_confidence, predictions, all_probabilities
+
+
+def update_m2_recentering():
+    """Actualiza el recentering Riemanniano M2 al final de cada trial.
+
+    Calcula la covarianza extendida (señal + template) para cada uno de los
+    11 pasos usando el prep_epoch capturado al inicio del trial, y actualiza
+    m2_prev_T[step] mediante interpolación geodésica (α = 1/(counter+1)).
+    """
+    global m2_prev_T, m2_rec_counter
+
+    if model_pkg is None or prep_epoch is None or not m2_ch_idx:
+        return
+
+    n_steps   = model_pkg['n_timepoints']
+    n_samp    = prep_epoch.shape[1]
+    all_t_idx = np.linspace(0, n_samp - 1, n_steps).astype(int)
+    epoch_ch  = prep_epoch[m2_ch_idx, :]
+
+    if m2_prev_T is None:
+        m2_prev_T = [None] * n_steps
+
+    alpha       = 1.0 / (m2_rec_counter + 1)
+    updated     = 0
+    n_ext       = len(m2_ch_idx) * 2   # canales señal + canales template
+    min_samples = n_ext + 2             # mínimo para covarianza de rango completo
+
+    for step in range(n_steps):
+        try:
+            mdm_template = model_pkg['mdm_templates'][step]
+            t_end  = all_t_idx[step] + 1
+            if t_end < min_samples:
+                continue  # covarianza rango-deficiente — saltar este paso
+            raw_s  = epoch_ch[:, :t_end]
+            tmpl_s = mdm_template[:, :t_end]
+            ext    = np.concatenate([raw_s, tmpl_s], axis=0)
+            raw_cov = ext @ ext.T
+            tr = np.trace(raw_cov)
+            if tr < 1e-12 or not np.isfinite(tr):
+                continue
+            cov = raw_cov / tr
+
+            if m2_prev_T[step] is None:
+                m2_prev_T[step] = cov
+            else:
+                m2_prev_T[step] = geodesic_riemann(m2_prev_T[step], cov, alpha)
+            updated += 1
+        except Exception:
+            pass
+
+    m2_rec_counter += 1
+    if logger:
+        logger.log_event(
+            f"[M2_recentering] trial={m2_rec_counter} | α={alpha:.3f} | "
+            f"pasos actualizados={updated}/{n_steps}"
+        )
 
 
 def hold_messages_and_classify(messages, colors, offsets, duration, mode, udp_socket, udp_ip, udp_port,
@@ -1147,10 +1301,18 @@ def show_feedback(duration=5, mode=0, eeg_state=None):
                     quiet=True
                 )
 
-        running_avg_confidence = leaky_integrator.update(current_confidence)
+            # FES pulses on each correct classification step — no state machine
+            if FES_toggle == 1:
+                step_correct = (mode == 0 and current_confidence > 0.5) or \
+                               (mode == 1 and current_confidence < 0.5)
+                if step_correct:
+                    send_udp_message(udp_socket_fes, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_SENS_GO", logger=logger)
+                    FES_active = True
+                else:
+                    send_udp_message(udp_socket_fes, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_STOP", logger=logger)
+                    FES_active = False
 
-        if FES_toggle == 1:
-            FES_active = handle_fes_activation(mode, running_avg_confidence, FES_active)
+        running_avg_confidence = leaky_integrator.update(current_confidence)
 
         # --------- DRAW (same logic, plus OFFLINE identity indicator) ---------
         screen.fill(config.black)

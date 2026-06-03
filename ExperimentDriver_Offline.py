@@ -93,6 +93,16 @@ if ARDUINO_PORT:
 else:
     logger.log_event("No Arduino port configured (Visual Only Mode).")
 
+
+def arduino_write(cmd: bytes):
+    if arduino_ser is None:
+        return
+    try:
+        arduino_ser.write(cmd)
+    except Exception as e:
+        logger.log_event(f"⚠️ Arduino write failed: {e}")
+
+
 # ============================================================
 # VISUAL FUNCTIONS (TUS FUNCIONES EXACTAS)
 # ============================================================
@@ -318,8 +328,7 @@ try:
         # [NUEVO] FORZAR RELAJACIÓN INMEDIATA (MANDAR '0')
         # ==============================================================================
         # Esto asegura que apenas se quite el cuadro rojo, el guante se abra.
-        if arduino_ser and arduino_ser.is_open:
-            arduino_ser.write(b'0') 
+        arduino_write(b'0')
         # ==============================================================================
 
         # END TRIAL / ROBOT
@@ -339,8 +348,7 @@ try:
             display_multiple_messages_with_udp([" "], [config.white], [0], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger)
 
         # Relajar guante entre trials (AGREGADO)
-        if arduino_ser and arduino_ser.is_open:
-            arduino_ser.write(b'0')
+        arduino_write(b'0')
 
         display_fixation_period(3)
         current_trial += 1
@@ -348,8 +356,8 @@ try:
 finally:
     pygame.quit()
     # Cierre seguro del puerto serial (AGREGADO)
+    arduino_write(b'0')
     if arduino_ser and arduino_ser.is_open:
-        arduino_ser.write(b'0')
         arduino_ser.close()
     [s.close() for s in [udp_socket_marker, udp_socket_robot, fes_socket]]
 

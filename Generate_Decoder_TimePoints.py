@@ -45,8 +45,8 @@ from sklearn.calibration import CalibratedClassifierCV
 # ============================================================
 # 1. IDENTIDAD Y CONFIGURACIÓN
 # ============================================================
-subject = "CNV_PILOT_SUBJ_011"
-session  = "S001_OFF"     # ← cambiar a S002OFFLINE_NOGLOVE según sesión
+subject = "CNV_PILOT_SUBJ_012"
+session  = "S001OFFLINE"     # ← cambiar a S002OFFLINE_NOGLOVE según sesión
 
 CHANNELS_TO_DROP        = ['M1', 'M2', 'T7', 'T8', 'Fp1', 'Fpz', 'Fp2']
 CHANNELS_TO_INTERPOLATE = []

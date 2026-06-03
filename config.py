@@ -10,8 +10,9 @@
 
 WORKING_DIR = "/home/lab-admin/BCI_project/BCI"
 DATA_DIR = "/home/lab-admin/Documents/CurrentStudy"
-SIMULATION_MODE = True
-TRAINING_SUBJECT = "CNV_PILOT_SUBJ_011"
+SIMULATION_MODE = False
+#TRAINING_SUBJECT = "CNV_PILOT_SUBJ_012"
+TRAINING_SUBJECT = "CNV_MAESTRO"
 # EEG Settings
 CAP_TYPE = 32  
 LOWCUT = 0.1  # Hz
@@ -21,7 +22,7 @@ HIGHCUT_ERRP = 10 #Hz
 FS = 512  # Sampling frequency (Hz)
 #MOTOR_CHANNEL_NAMES = ['FC1','FC2','C3', 'Cz', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P7','P3', 'Pz', 'P4', 'P8', 'POz']
 #MOTOR_CHANNEL_NAMES = ['FC5', 'FC1', 'C3', 'Cz', 'CP5', 'CP1', 'Fz']
-MOTOR_CHANNEL_NAMES = ['FC5', 'C3', 'Cz', 'CP1', 'Fz']
+MOTOR_CHANNEL_NAMES = ['FC5', 'FC1', 'C3', 'Cz', 'CP1', 'Fz']
 
 ERRP_CHANNEL_NAMES = ['F3', 'Fz', 'F4', 'FC1', 'FC2', 'Cz']
 EOG_CHANNEL_NAMES = ['AUX1'] # List of EOG channel names to use
@@ -31,7 +32,7 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 30   # Total number of trials
+TOTAL_TRIALS = 10   # Total number of trials
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
@@ -56,9 +57,9 @@ EARLYSTOP_MODE = "correct_only"
 CLASSIFY_WINDOW = 2500  # Duration of EEG data window for classification (milliseconds)
 FILTER_BUFFER_SIZE = 3072 #6s at 512 Hz
 BASELINE_DURATION = 1 #seconds
-ACCURACY_THRESHOLD = 0.6  # OBS Accuracy threshold to determine "Correct" (plan to obsolete)
-THRESHOLD_MI = 0.5 #Threshold for MI "correct"
-THRESHOLD_REST = 0.5 #Threshold for REST "Correct"
+ACCURACY_THRESHOLD = 0.8  # OBS Accuracy threshold to determine "Correct" (plan to obsolete)
+THRESHOLD_MI = 0.6 #Threshold for MI "correct"
+THRESHOLD_REST = 0.6 #Threshold for REST "Correct"
 RELAXATION_RATIO = 0.0 # relaxation ratio for sustained MI during movement
 MIN_PREDICTIONS = 8 # Min number of predictions during Online experiment before the decoder can end early
 STEP_SIZE = 1/16
@@ -68,7 +69,7 @@ CLASSIFICATION_SCHEME_OPT = "TIMESERIES"
 SURFACE_LAPLACIAN_TOGGLE = 0 #apply the surface laplacian spatial filter during online
 SELECT_MOTOR_CHANNELS = 1 # toggle to select motor channels or not (can be used to select other channels too)
 SELECT_ERRP_CHANNELS = 0 #toggle to select ERRP channels
-INTEGRATOR_ALPHA = 0.96 # defines how fast the accumulated probability may change as new data comes in
+INTEGRATOR_ALPHA = 0.90 # defines how fast the accumulated probability may change as new data comes in
 SHRINKAGE_PARAM = 0.02 # hyperparameter for shrinkage regularization
 LEDOITWOLF = 0 #Set to true to use ledoit wolf shrinkage regularization - otherwise pyreimannian will be used w/ shrinkage param shown above
 
@@ -80,7 +81,7 @@ SAVE_ADAPTIVE_T = False #this toggle saves "Adaptive_T" to the EEG directory dur
 
 
 # FES Parameters
-FES_toggle = 0
+FES_toggle = 1
 FES_CHANNEL = "red"
 FES_TIMING_OFFSET = 7 
 # above for motor FES, cut out X seconds before the full duration of movement. This should represent when the robot will naturally reach the end of motion (in successful case)
@@ -201,4 +202,4 @@ ARDUINO_BAUD = 9600         # Arduino communication baud rate
 ARDUINO_CMD_MI   = b"1"     # Movement detected (label 200)
 ARDUINO_CMD_REST = b"0"     # Rest or ambiguous state detected
 
-SIMULATION_MODE = True
+SIMULATION_MODE = False

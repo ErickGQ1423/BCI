@@ -192,10 +192,11 @@ class ControlPanel(QMainWindow):
         self.driver = Proc("Experimental Driver", None, ROOT) 
         self.fes    = Proc("FES Listener", f'python -u "{FES_PY}"', ROOT)
 
-        # Robot terminal 
+        # Robot terminal
         self.robot_term: Optional[QProcess] = None
         self.labrec_term: Optional[QProcess] = None
         self.eego_term: Optional[QProcess] = None
+        self.impedance_proc: Optional[QProcess] = None
 
         # Logs
         self._log_buffers: Dict[str, str] = {"Marker": "", "FES": "", "Driver": "", "Robot": "", "Panel": ""}
@@ -214,6 +215,7 @@ class ControlPanel(QMainWindow):
         self._set_led(self.lbl_fes, "stopped")
         self._set_led(self.lbl_driver, "stopped")
         self._set_led(self.lbl_eego, "stopped")
+        self._set_led(self.lbl_impedance, "stopped")
         
         self.ui_timer = QTimer(self)
         self.ui_timer.setInterval(400)
@@ -309,6 +311,19 @@ class ControlPanel(QMainWindow):
         btn_eego = QPushButton("Open eegoSports")
         btn_eego.clicked.connect(self.on_open_eego)
         grid.addWidget(btn_eego, row, 2)
+        row += 1
+
+        # ===== Impedance Monitor =====
+        self.lbl_impedance = QLabel("●"); self._set_led(self.lbl_impedance, "stopped")
+        grid.addWidget(QLabel("<b>Impedance Monitor</b>"), row, 0)
+        grid.addWidget(self.lbl_impedance, row, 1)
+        self.cmb_impedance_cap = QComboBox()
+        self.cmb_impedance_cap.addItems(["ca209", "ca001", "ca200"])
+        self.cmb_impedance_cap.setToolTip("EEG cap layout")
+        btn_impedance = QPushButton("Open")
+        btn_impedance.clicked.connect(self.on_open_impedance)
+        grid.addWidget(self.cmb_impedance_cap, row, 2)
+        grid.addWidget(btn_impedance, row, 3)
         row += 1
 
         # ===== Marker =====
@@ -834,6 +849,38 @@ class ControlPanel(QMainWindow):
             self._append_log("Robot", f"[{self._ts()}] RemoveOverrides error: {e}\n")
             QMessageBox.warning(self, "Robot", f"RemoveOverrides failed:\n{e}")
 
+    def on_open_impedance(self):
+        if self.impedance_proc and self.impedance_proc.state() != QProcess.NotRunning:
+            return
+        cap = self.cmb_impedance_cap.currentText()
+        subject = self.training_subject or ""
+        log_dir = str(pathlib.Path.home() / "impedance_logs")
+        os.makedirs(log_dir, exist_ok=True)
+
+        self.impedance_proc = QProcess(self)
+        self.impedance_proc.started.connect(lambda: (
+            self._set_led(self.lbl_impedance, "running"),
+            self._append_log("Panel", f"[{self._ts()}] Impedance Monitor started (cap={cap})\n"),
+        ))
+        def _impedance_closed(code, status):
+            self._set_led(self.lbl_impedance, "stopped")
+            self._append_log("Panel", f"[{self._ts()}] Impedance Monitor closed (code={code})\n")
+            self.impedance_proc = None
+        self.impedance_proc.finished.connect(_impedance_closed)
+
+        args = ["--mode", "live", "--cap", cap, "--data-dir", log_dir]
+        if subject:
+            args += ["--subject", subject]
+        self.impedance_proc.setProgram("impedance-monitor")
+        self.impedance_proc.setArguments(args)
+        self.impedance_proc.start()
+        if not self.impedance_proc.waitForStarted(3000):
+            self._set_led(self.lbl_impedance, "error")
+            self._append_log("Panel", f"[{self._ts()}] Impedance Monitor failed to start\n")
+            QMessageBox.warning(self, "Impedance Monitor",
+                                "Could not launch impedance-monitor.\n"
+                                "Check that it is installed in the active environment.")
+
     # ----- External apps -----
     def on_open_labrec(self):
         if self.labrec_term and self.labrec_term.state() != QProcess.NotRunning:
@@ -998,6 +1045,12 @@ class ControlPanel(QMainWindow):
         ):
             try: self._stop_proc(p, led, title)
             except Exception: pass
+        if self.impedance_proc and self.impedance_proc.state() != QProcess.NotRunning:
+            try:
+                self.impedance_proc.terminate()
+                self.impedance_proc.waitForFinished(1500)
+            except Exception:
+                pass
         event.accept()
 
 # ----------------- Entrypoint -----------------

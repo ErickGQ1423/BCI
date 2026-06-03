@@ -27,11 +27,11 @@ from pyriemann.classification import MDM
 # ============================================================
 
 SUBJECTS = [
-    ("CNV_PILOT_SUBJ_011", "S001_OFF"),
+    ("CNV_PILOT_SUBJ_012", "S001OFFLINE"),
 ]
 
-XDF_BASE  = "/home/lab-admin/Documents/CNVStudy"
-MODEL_DIR = "/home/lab-admin/Documents/CurrentStudy/sub-CNV_PILOT_SUBJ_011/models"
+XDF_BASE  = "/home/lab-admin/Documents/CurrentStudy"
+MODEL_DIR = "/home/lab-admin/Documents/CurrentStudy/sub-CNV_PILOT_SUBJ_012/models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 PICKS         = ['FC5', 'C3', 'Cz', 'CP1', 'Fz']
