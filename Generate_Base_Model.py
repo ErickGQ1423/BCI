@@ -27,6 +27,7 @@ Pipeline  : avg-ref → notch 60 Hz → BP 0.1–1.0 Hz
 import os
 import pickle
 import numpy as np
+import bci_runtime_env
 import mne
 
 import config

@@ -23,6 +23,7 @@ Features B       : matrices de covarianza CSD (ventana [-1.5, 0.0] s)
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import bci_runtime_env
 import mne
 from mne.preprocessing import compute_current_source_density
 

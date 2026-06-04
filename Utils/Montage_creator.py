@@ -1,4 +1,5 @@
 import numpy as np
+import bci_runtime_env
 import mne
 import matplotlib.pyplot as plt
 import os

@@ -7,6 +7,7 @@ import datetime
 import os
 from pylsl import StreamInlet, resolve_stream
 # MNE for real-time EEG processing
+import bci_runtime_env
 import mne
 mne.set_log_level("WARNING")  # Options: "ERROR", "WARNING", "INFO", "DEBUG"
 # Preprocessing functions (updated for MNE integration)

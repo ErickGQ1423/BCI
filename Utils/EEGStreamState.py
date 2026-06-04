@@ -1,5 +1,6 @@
 from collections import deque
 import numpy as np
+import bci_runtime_env
 import mne
 from pylsl import StreamInlet
 from Utils.preprocessing import (

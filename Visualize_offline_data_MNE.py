@@ -2,6 +2,7 @@ import os
 import pyxdf
 import numpy as np
 import matplotlib.pyplot as plt
+import bci_runtime_env
 import mne
 from scipy.signal import welch
 import config

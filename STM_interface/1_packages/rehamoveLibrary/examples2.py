@@ -54,6 +54,7 @@ if ext==1:
 		# r.pulse(distalChannel_ext,3.5, 250+int(((t_passed - t_init)/STS_duration[0])*250)) # 3 150+int(((t_passed - t_init)/STS_duration[1])*250)
 		time.sleep(1/30)
 	while t_passed - t_init < STS_duration[1]:
+		pass
 	# 	t_passed = time.time()
 	# 	r.pulse(distalChannel_ext,I_STS_distExt, FES_pulseWidth) # 3 250+int(((t_passed - t_init)/STS_duration[0])*250)
 	# 	r.pulse(proximalChannel_ext,I_STS_proxExt, FES_pulseWidth) # 3 250+int(((t_passed - t_init)/STS_duration[0])*250)
@@ -124,4 +125,3 @@ else:
 	# 	r.pulse(distalChannel_flex, 4.5 , 520) # 4.5
 
 	# 	time.sleep(1/30)
-

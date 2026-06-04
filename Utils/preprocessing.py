@@ -2,6 +2,7 @@ from scipy.signal import butter, filtfilt, iirnotch, lfilter, sosfilt, sosfilt_z
 import numpy as np
 import config
 from sklearn.linear_model import LinearRegression
+import bci_runtime_env
 import mne
 
 def concatenate_streams(eeg_streams, marker_streams):

@@ -2,6 +2,7 @@ import os
 import pyxdf
 import numpy as np
 import matplotlib.pyplot as plt
+import bci_runtime_env
 import mne
 from matplotlib.cm import ScalarMappable # Add colorbar explicitly
 from matplotlib.colors import Normalize  # Add colorbar explicitly

@@ -642,6 +642,7 @@ import serial
 import sys  # ✅ faltaba (lo usas en sys.exit)
 from pylsl import StreamInlet, resolve_stream
 
+import bci_runtime_env
 import mne
 mne.set_log_level("WARNING")
 
@@ -672,15 +673,21 @@ import Utils.runtime_common as _RC
 # ============================================================
 # LOGGING & CONFIG
 # ============================================================
+recording_subject = getattr(config, "RECORDING_SUBJECT", config.TRAINING_SUBJECT)
+recording_data_dir = Path(getattr(config, "RECORDING_DATA_DIR", config.DATA_DIR))
 logger = LoggerManager.auto_detect_from_subject(
-    subject=config.TRAINING_SUBJECT,
-    base_path=Path(config.DATA_DIR),
+    subject=recording_subject,
+    base_path=recording_data_dir,
     mode="online"
 )
 # Log config snapshot
 loggable_fields = [
     "UDP_MARKER", "UDP_ROBOT", "UDP_FES", "ARM_SIDE", "TOTAL_TRIALS",
-    "TIME_MI", "FES_toggle", "TRAINING_SUBJECT"
+    "TIME_MI", "FES_toggle", "TRAINING_SUBJECT", "DATA_DIR",
+    "RECORDING_SUBJECT", "RECORDING_DATA_DIR", "PREP_DECODER_MODE",
+    "RECENTERING", "THRESHOLD_MI", "THRESHOLD_REST",
+    "EEG_QUALITY_GATE", "EEG_QUALITY_MIN_PTP_UV", "EEG_QUALITY_MAX_PTP_UV",
+    "EEG_QUALITY_MAX_RMS_UV", "EEG_QUALITY_MAX_ABS_UV"
 ]
 config_log_subset = {k: getattr(config, k) for k in loggable_fields if hasattr(config, k)}
 logger.save_config_snapshot(config_log_subset)
@@ -813,6 +820,63 @@ _RC.counter = counter
 # ============================================================
 NEXT_INDICATOR_POS = (0.50, 0.28)
 NEXT_INDICATOR_SCALE = 1.00
+
+
+def resolve_prep_decision(prep_predictions, prep_all_probs, mode):
+    """Return (prediction_label_or_none, reason) for the preparation phase."""
+    n_valid = len(prep_predictions)
+    min_valid = int(getattr(config, "MIN_FINAL_PREDICTIONS", config.MIN_PREDICTIONS))
+    if n_valid < min_valid:
+        return None, f"ambiguous_insufficient_predictions n={n_valid}/{min_valid}"
+
+    mi_label = 200
+    rest_label = 100
+    n_mi = sum(1 for pred in prep_predictions if pred == mi_label)
+    n_rest = sum(1 for pred in prep_predictions if pred == rest_label)
+    vote_fraction = max(n_mi, n_rest) / n_valid if n_valid else 0.0
+    min_vote_fraction = float(getattr(config, "FINAL_DECISION_MIN_VOTE_FRACTION", 0.60))
+
+    if vote_fraction < min_vote_fraction:
+        return None, (
+            f"ambiguous_split_vote mi={n_mi} rest={n_rest} "
+            f"vote_fraction={vote_fraction:.2f}"
+        )
+
+    winning_label = mi_label if n_mi >= n_rest else rest_label
+    if prep_all_probs:
+        p_mi = [row[2] for row in prep_all_probs if len(row) >= 3]
+        p_rest = [row[1] for row in prep_all_probs if len(row) >= 3]
+        mean_mi = sum(p_mi) / len(p_mi) if p_mi else 0.5
+        mean_rest = sum(p_rest) / len(p_rest) if p_rest else 0.5
+    else:
+        mean_mi = n_mi / n_valid
+        mean_rest = n_rest / n_valid
+
+    target_label = mi_label if mode == 0 else rest_label
+    if winning_label != target_label:
+        target_name = "MI" if target_label == mi_label else "REST"
+        winning_name = "MI" if winning_label == mi_label else "REST"
+        return None, (
+            f"ambiguous_opposite_evidence target={target_name} "
+            f"winner={winning_name} mi={n_mi} rest={n_rest} "
+            f"vote_fraction={vote_fraction:.2f}"
+        )
+
+    if winning_label == mi_label:
+        if mean_mi < config.THRESHOLD_MI:
+            return None, f"ambiguous_low_mi_mean mean_mi={mean_mi:.3f}"
+        return mi_label, (
+            f"accepted_mi mi={n_mi} rest={n_rest} "
+            f"vote_fraction={vote_fraction:.2f} mean_mi={mean_mi:.3f}"
+        )
+
+    if mean_rest < config.THRESHOLD_REST:
+        return None, f"ambiguous_low_rest_mean mean_rest={mean_rest:.3f}"
+    return rest_label, (
+        f"accepted_rest mi={n_mi} rest={n_rest} "
+        f"vote_fraction={vote_fraction:.2f} mean_rest={mean_rest:.3f}"
+    )
+
 
 def draw_arrow_directional(screen, pos_x, pos_y, size, color, direction="right"):
     """
@@ -987,19 +1051,20 @@ def draw_pretrial_screen_online(mode, elapsed_ms=0, total_ms=2500, fill_progress
 
     # ── Countdown bar ─────────────────────────────────────────
     bar_w    = int(screen_width * 0.3)
-    bar_h    = 12
+    bar_h    = int(getattr(config, "PREP_COUNTDOWN_BAR_HEIGHT", 28))
     bar_x    = screen_width // 2 - bar_w // 2
     bar_y    = screen_height // 2 + 245
     progress = min(elapsed_ms / total_ms, 1.0) if total_ms > 0 else 0
     fill_w   = int(bar_w * progress)
     bar_color = (255, 50, 50) if is_mi else (0, 120, 255)
 
-    pygame.draw.rect(screen, (60, 60, 60), (bar_x, bar_y, bar_w, bar_h), border_radius=6)
+    bar_radius = max(6, bar_h // 2)
+    pygame.draw.rect(screen, (60, 60, 60), (bar_x, bar_y, bar_w, bar_h), border_radius=bar_radius)
     if fill_w > 0:
         if is_mi:
-            pygame.draw.rect(screen, bar_color, (bar_x, bar_y, fill_w, bar_h), border_radius=6)
+            pygame.draw.rect(screen, bar_color, (bar_x, bar_y, fill_w, bar_h), border_radius=bar_radius)
         else:
-            pygame.draw.rect(screen, bar_color, (bar_x + bar_w - fill_w, bar_y, fill_w, bar_h), border_radius=6)
+            pygame.draw.rect(screen, bar_color, (bar_x + bar_w - fill_w, bar_y, fill_w, bar_h), border_radius=bar_radius)
 
     # ── Indicador pequeño arriba ───────────────────────────────
     pos_x = int(screen_width * NEXT_INDICATOR_POS[0])
@@ -1040,7 +1105,12 @@ def main():
     running = True
     clock = pygame.time.Clock()
 
-    display_fixation_period(duration=3, eeg_state=eeg_state)
+    display_fixation_period(duration=12, eeg_state=eeg_state)
+    try:
+        eeg_state.compute_baseline(duration_sec=config.BASELINE_DURATION)
+        logger.log_event("✅ Initial EEG baseline computed before Trial 1.")
+    except ValueError as e:
+        logger.log_event(f"⚠️ Initial baseline not ready before Trial 1: {e}")
 
     # Ensure glove is open at start
     if arduino:
@@ -1071,12 +1141,14 @@ def main():
         prep_all_probs   = []
         prep_confidence  = 0.0
         prep_prediction  = None
+        prep_decision_reason = "no_decision_yet"
         prep_earlystop   = False
         prep_earlystop_elapsed = None
         next_classify_tick = None
         window_size_samples = int((config.CLASSIFY_WINDOW / 1000) * config.FS)
         accuracy_threshold  = config.THRESHOLD_MI if mode == 0 else config.THRESHOLD_REST
         prep_fes_active = False
+        _RC.reset_m2_quality_state()
 
 
         while waiting_for_press:
@@ -1094,12 +1166,16 @@ def main():
                 if countdown_start is None:
                     countdown_start = pygame.time.get_ticks()
                     next_classify_tick = time.time() + config.STEP_SIZE
-                    # M2: capturar epoch completo (2.5s pre-trigger ya en buffer)
+                    # M2_CUMULATIVE refreshes from the live EEG buffer on each classify tick.
+                    # FROZEN_EPOCH_DEBUG keeps the legacy seed epoch for comparison only.
                     if _RC.model_pkg is not None:
-                        try:
-                            _buf, _ = eeg_state.get_baseline_corrected_window(
-                                window_size_samples)
-                        except Exception:
+                        if getattr(config, "PREP_DECODER_MODE", "M2_CUMULATIVE") == "FROZEN_EPOCH_DEBUG":
+                            try:
+                                _buf, _ = eeg_state.get_baseline_corrected_window(
+                                    window_size_samples)
+                            except Exception:
+                                _buf = None
+                        else:
                             _buf = None
                         _RC.prep_epoch    = _buf
                         _RC.m2_ch_idx     = None
@@ -1122,12 +1198,6 @@ def main():
                                     elapsed_ms=elapsed
                                 )
                                 prep_confidence = prep_leaky.update(raw_confidence)
-                                # Option B: FES on first individual step with correct raw prediction
-                                if mode == 0 and FES_toggle == 1 and not prep_fes_active:
-                                    if raw_confidence > config.THRESHOLD_MI:
-                                        send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
-                                                         config.UDP_FES["PORT"], "FES_SENS_GO", logger=logger)
-                                        prep_fes_active = True
 
                             # ── FORZAR PREDICCIÓN PARA PRUEBA SIN GORRA ──
                             # (fuera del if buffer, siempre se ejecuta)
@@ -1135,9 +1205,27 @@ def main():
                                 prep_confidence = 0.7
                                 prep_predictions.append(200)
 
+                            correct_class = 200 if mode == 0 else 100
+                            consecutive_required = int(getattr(config, "EARLYSTOP_CONSECUTIVE_PREDICTIONS", 1))
+                            recent_predictions = prep_predictions[-consecutive_required:]
+                            sustained_correct = (
+                                len(recent_predictions) == consecutive_required and
+                                all(pred == correct_class for pred in recent_predictions)
+                            )
+
+                            if mode == 0 and FES_toggle == 1 and not prep_fes_active:
+                                if raw_confidence >= config.THRESHOLD_MI and sustained_correct:
+                                    send_udp_message(udp_socket_fes, config.UDP_FES["IP"],
+                                                     config.UDP_FES["PORT"], "FES_SENS_GO", logger=logger)
+                                    prep_fes_active = True
+
                             if len(prep_predictions) >= config.MIN_PREDICTIONS and \
-                               prep_confidence >= accuracy_threshold:
-                                prep_prediction = 200 if mode == 0 else 100
+                               prep_confidence >= accuracy_threshold and sustained_correct:
+                                prep_prediction = prep_predictions[-1]
+                                prep_decision_reason = (
+                                    f"earlystop_sustained confidence={prep_confidence:.3f} "
+                                    f"recent_n={consecutive_required}"
+                                )
                                 prep_earlystop  = True
                                 if prep_earlystop_elapsed is None:
                                     prep_earlystop_elapsed = elapsed
@@ -1194,6 +1282,16 @@ def main():
         prep_fes_active = False
 
         # === Resumen M2 ambos modelos (M2 mode) ===
+        if prep_prediction is None:
+            prep_prediction, prep_decision_reason = resolve_prep_decision(
+                prep_predictions, prep_all_probs, mode
+            )
+        logger.log_event(
+            f"[PREP_DECISION] trial={current_trial+1} "
+            f"prediction={prep_prediction if prep_prediction is not None else 'AMBIGUOUS'} "
+            f"early_stop={prep_earlystop} reason={prep_decision_reason}"
+        )
+
         if _RC.model_pkg is not None and _RC._m2_lda_probs:
             _label         = "MI" if mode == 0 else "REST"
             _earlystop_step = _RC._m2_last_step + 1 if prep_earlystop else "—"
@@ -1202,7 +1300,7 @@ def main():
                 f"early_stop={prep_earlystop} (paso {_earlystop_step})"
             )
             logger.log_event(
-                f"  MDM (decisión)   : {_RC._m2_mdm_probs}"
+                f"  MDM P(MI)        : {_RC._m2_mdm_probs}"
             )
             logger.log_event(
                 f"  LDA (validación) : {_RC._m2_lda_probs}"
@@ -1211,8 +1309,14 @@ def main():
             _RC._m2_lda_probs = []
             _RC._m2_last_step = -1
 
+        if getattr(_RC, "_m2_quality_reject_count", 0):
+            logger.log_event(
+                f"[EEG_QUALITY_SUMMARY] rejected_windows={_RC._m2_quality_reject_count} "
+                f"decision={'none' if not prep_predictions else 'partial'}"
+            )
+
         # Actualizar recentering Riemanniano M2 con el epoch de este trial
-        if _RC.model_pkg is not None:
+        if _RC.model_pkg is not None and getattr(config, "RECENTERING", 0):
             _RC.update_m2_recentering()
 
         # === Resumen de probabilidades de la fase de preparación ===
@@ -1321,6 +1425,16 @@ def main():
             predicted_label=prediction, early_cutout=earlystop_flag,
             mi_threshold=config.THRESHOLD_MI, rest_threshold=config.THRESHOLD_REST,
             logger=logger, phase="MI" if mode == 0 else "REST"
+        )
+
+        logger.log_trial_summary(
+            trial_number=current_trial + 1,
+            true_label=correct_class,
+            predicted_label=prediction,
+            early_cutout=earlystop_flag,
+            accuracy_threshold=accuracy_threshold,
+            confidence=prep_confidence,
+            num_predictions=len(prep_predictions)
         )
 
         # -----------------------------------------------------------

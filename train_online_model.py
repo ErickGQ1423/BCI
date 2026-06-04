@@ -16,6 +16,7 @@ Ventana : [-2.5s, 0.0s] — M1 estático
 import os
 import pickle
 import numpy as np
+import bci_runtime_env
 import mne
 
 import config

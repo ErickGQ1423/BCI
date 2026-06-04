@@ -629,11 +629,14 @@ template = None
 
 # M2 cross-subject model state
 model_pkg       = None   # full model package (M2_LDA_shrink_MDM format)
-prep_epoch      = None   # epoch buffer captured at trial start (n_ch, n_samples)
+prep_epoch      = None   # latest full prep epoch/window used by M2 online logic
 m2_ch_idx       = None   # channel indices for model picks in live stream
 _m2_last_step   = -1     # last M2 step logged (avoid duplicate logs per step)
 _m2_lda_probs   = []     # LDA P(MI) per step — accumulated for end-of-trial summary
 _m2_mdm_probs   = []     # MDM confidence per step — accumulated for end-of-trial summary
+_m2_quality_reject_count = 0
+_m2_quality_bad_trial = False
+_m2_quality_last_logged_step = -1
 
 # M2 Riemannian recentering state (one Prev_T per time step)
 m2_prev_T       = None   # list[ndarray] of size n_timepoints; None until first trial
@@ -655,6 +658,90 @@ FES_toggle = None
 # Adaptive recentering state
 Prev_T = None
 counter = 0
+
+
+def _prep_decoder_mode():
+    cfg = config
+    if cfg is None:
+        try:
+            import config as cfg
+        except Exception:
+            cfg = None
+    mode = getattr(cfg, "PREP_DECODER_MODE", None)
+    if mode:
+        return str(mode).upper()
+    # Backward compatibility for temporary test configs.
+    return "M2_CUMULATIVE" if getattr(cfg, "M2_LIVE_WINDOW", False) else "FROZEN_EPOCH_DEBUG"
+
+
+def reset_m2_quality_state():
+    global _m2_quality_reject_count, _m2_quality_bad_trial, _m2_quality_last_logged_step
+    _m2_quality_reject_count = 0
+    _m2_quality_bad_trial = False
+    _m2_quality_last_logged_step = -1
+
+
+def _check_eeg_quality(window_ch):
+    """Return (ok, reason, metrics) for the selected model channels."""
+    cfg = config
+    if cfg is None:
+        try:
+            import config as cfg
+        except Exception:
+            cfg = None
+
+    if not getattr(cfg, "EEG_QUALITY_GATE", True):
+        return True, "disabled", {}
+
+    if window_ch is None:
+        return False, "empty_window", {}
+
+    x = np.asarray(window_ch, dtype=float)
+    if x.ndim != 2 or x.size == 0:
+        return False, "bad_shape", {"shape": getattr(x, "shape", None)}
+
+    if not np.isfinite(x).all():
+        return False, "nan_or_inf", {}
+
+    ptp = np.ptp(x, axis=1)
+    rms = np.sqrt(np.mean(x * x, axis=1))
+    max_abs = np.max(np.abs(x), axis=1)
+
+    min_ptp = float(getattr(cfg, "EEG_QUALITY_MIN_PTP_UV", 0.2))
+    max_ptp = float(getattr(cfg, "EEG_QUALITY_MAX_PTP_UV", 250.0))
+    max_rms = float(getattr(cfg, "EEG_QUALITY_MAX_RMS_UV", 75.0))
+    max_abs_lim = float(getattr(cfg, "EEG_QUALITY_MAX_ABS_UV", 250.0))
+    bad_channels_to_reject = int(getattr(cfg, "EEG_QUALITY_BAD_CHANNELS_TO_REJECT", 1))
+    hard_max_abs = float(getattr(cfg, "EEG_QUALITY_HARD_MAX_ABS_UV", max_abs_lim * 2))
+
+    flat_count = int(np.sum(ptp < min_ptp))
+    high_ptp_count = int(np.sum(ptp > max_ptp))
+    high_rms_count = int(np.sum(rms > max_rms))
+    high_abs_count = int(np.sum(max_abs > max_abs_lim))
+
+    metrics = {
+        "ptp_max": float(np.max(ptp)),
+        "ptp_min": float(np.min(ptp)),
+        "rms_max": float(np.max(rms)),
+        "abs_max": float(np.max(max_abs)),
+        "flat_ch": flat_count,
+        "high_ptp_ch": high_ptp_count,
+        "high_rms_ch": high_rms_count,
+        "high_abs_ch": high_abs_count,
+    }
+
+    if metrics["abs_max"] > hard_max_abs:
+        return False, "hard_abs_too_high", metrics
+    if flat_count >= bad_channels_to_reject:
+        return False, "flat_signal", metrics
+    if high_ptp_count >= bad_channels_to_reject:
+        return False, "ptp_too_high", metrics
+    if high_rms_count >= bad_channels_to_reject:
+        return False, "rms_too_high", metrics
+    if high_abs_count >= bad_channels_to_reject:
+        return False, "abs_too_high", metrics
+
+    return True, "ok", metrics
 
 
 # ============================================================
@@ -897,15 +984,28 @@ def handle_fes_activation(mode, running_avg_confidence, fes_active):
 
 def classify_real_time(eeg_state, window_size_samples, all_probabilities, predictions,
                        mode, leaky_integrator, update_recentering=True, elapsed_ms=None):
-    global counter, Prev_T
+    global counter, Prev_T, prep_epoch
     global m2_ch_idx, _m2_last_step, _m2_lda_probs, _m2_mdm_probs
+    global _m2_quality_reject_count, _m2_quality_bad_trial, _m2_quality_last_logged_step
 
     pygame.display.flip()
     pygame.event.get()  # Heartbeat to OS
 
     # ── M2 cross-subject mode ─────────────────────────────────
     if model_pkg is not None and model_pkg.get('model_type') == 'M2_LDA_shrink_MDM':
-        if prep_epoch is None:
+        decoder_mode = _prep_decoder_mode()
+        epoch_source = prep_epoch
+        window_mode = decoder_mode
+
+        if decoder_mode == "M2_CUMULATIVE":
+            try:
+                epoch_source, _ = eeg_state.get_baseline_corrected_window(window_size_samples)
+                prep_epoch = epoch_source
+            except ValueError:
+                epoch_source = prep_epoch
+                window_mode = "M2_CUMULATIVE_FALLBACK"
+
+        if epoch_source is None:
             return leaky_integrator.accumulated_probability, predictions, all_probabilities
 
         # Lazy init: find channel indices in live stream
@@ -925,19 +1025,46 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
         MI_ID     = model_pkg['MI_ID']
 
         # Sample indices within the 2.5s epoch window
-        n_samp    = prep_epoch.shape[1]
+        n_samp    = epoch_source.shape[1]
         all_t_idx = np.linspace(0, n_samp - 1, n_steps).astype(int)
 
-        # Extract channels from captured epoch
-        epoch_ch  = prep_epoch[m2_ch_idx, :]   # (3, n_samp)
+        # Extract channels from the selected epoch source
+        epoch_ch  = epoch_source[m2_ch_idx, :]   # (3, n_samp)
 
-        # ── MDM — decision (con recentering Riemanniano si disponible) ──
+        quality_ok, quality_reason, quality_metrics = _check_eeg_quality(epoch_ch)
+        if not quality_ok:
+            _m2_quality_reject_count += 1
+            _m2_quality_bad_trial = True
+            if logger and step != _m2_quality_last_logged_step:
+                _m2_quality_last_logged_step = step
+                logger.log_event(
+                    f"[BAD_EEG] step={step+1:02d}/{n_steps} "
+                    f"reason={quality_reason} "
+                    f"ptp_max={quality_metrics.get('ptp_max', float('nan')):.1f} "
+                    f"rms_max={quality_metrics.get('rms_max', float('nan')):.1f} "
+                    f"abs_max={quality_metrics.get('abs_max', float('nan')):.1f} "
+                    f"bad_ch(ptp/rms/abs/flat)="
+                    f"{quality_metrics.get('high_ptp_ch', 0)}/"
+                    f"{quality_metrics.get('high_rms_ch', 0)}/"
+                    f"{quality_metrics.get('high_abs_ch', 0)}/"
+                    f"{quality_metrics.get('flat_ch', 0)} "
+                    f"-> classification skipped"
+                )
+            return leaky_integrator.accumulated_probability, predictions, all_probabilities
+
+        # MDM decision. Keep raw P(MI)/P(REST) separate from the
+        # trial-oriented confidence used for early-stop.
+        p_mi = 0.5
+        p_rest = 0.5
         mdm_confidence = 0.5
         try:
             mdm_model    = model_pkg['mdm_models'][step]
             mdm_template = model_pkg['mdm_templates'][step]
             t_end        = all_t_idx[step] + 1
-            raw_step     = epoch_ch[:, :t_end]
+            if decoder_mode == "M2_CUMULATIVE":
+                raw_step = epoch_ch[:, -t_end:]
+            else:
+                raw_step = epoch_ch[:, :t_end]
             tmpl_cut     = mdm_template[:, :t_end]
             extended     = np.concatenate([raw_step, tmpl_cut], axis=0)
             raw_cov      = extended @ extended.T
@@ -954,8 +1081,9 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
                 cov    = np.expand_dims(cov, 0)
                 mi_col = list(mdm_model.classes_).index(MI_ID)
                 proba  = mdm_model.predict_proba(cov)[0]
-                mdm_confidence = float(proba[mi_col]) if mode == 0 \
-                                 else float(1.0 - proba[mi_col])
+                p_mi = float(proba[mi_col])
+                p_rest = float(1.0 - p_mi)
+                mdm_confidence = p_mi if mode == 0 else p_rest
         except Exception:
             pass
 
@@ -966,24 +1094,31 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
             try:
                 lda_model  = model_pkg['skl_models'][step]
                 t_idx      = all_t_idx[:step + 1]
-                features   = epoch_ch[:, t_idx].flatten().reshape(1, -1)
+                if decoder_mode == "M2_CUMULATIVE":
+                    lda_t_idx = np.linspace(0, raw_step.shape[1] - 1, step + 1).astype(int)
+                    features = raw_step[:, lda_t_idx].flatten().reshape(1, -1)
+                else:
+                    features = epoch_ch[:, t_idx].flatten().reshape(1, -1)
                 p_lda      = lda_model.predict_proba(features)[0]
                 mi_idx_lda = list(lda_model.classes_).index(MI_ID)
                 p_lda_mi   = float(p_lda[mi_idx_lda])
             except Exception:
                 p_lda_mi = 0.5
             _m2_lda_probs.append(round(p_lda_mi, 3))
-            _m2_mdm_probs.append(round(mdm_confidence, 3))
+            _m2_mdm_probs.append(round(p_mi, 3))
             if logger:
                 logger.log_event(
                     f"[M2_step] paso={step+1:02d}/{n_steps} "
                     f"t={model_pkg['t_points'][step]:+.2f}s  "
-                    f"MDM={mdm_confidence:.3f}  LDA={p_lda_mi:.3f}"
+                    f"window={window_mode}  "
+                    f"MDM_PMI={p_mi:.3f}  "
+                    f"conf_{'MI' if mode == 0 else 'REST'}={mdm_confidence:.3f}  "
+                    f"LDA={p_lda_mi:.3f}"
                 )
 
-        predicted_label = 200 if mdm_confidence >= 0.5 else 100
+        predicted_label = 200 if p_mi >= 0.5 else 100
         predictions.append(predicted_label)
-        all_probabilities.append([time.time(), 1.0 - mdm_confidence, mdm_confidence])
+        all_probabilities.append([time.time(), p_rest, p_mi])
         return mdm_confidence, predictions, all_probabilities
 
     # ── Legacy mode ───────────────────────────────────────────
@@ -1071,6 +1206,14 @@ def update_m2_recentering():
     m2_prev_T[step] mediante interpolación geodésica (α = 1/(counter+1)).
     """
     global m2_prev_T, m2_rec_counter
+
+    if not getattr(config, "RECENTERING", 0):
+        return
+
+    if _m2_quality_bad_trial:
+        if logger:
+            logger.log_event("[M2_recentering] skipped — BAD_EEG detected during trial")
+        return
 
     if model_pkg is None or prep_epoch is None or not m2_ch_idx:
         return

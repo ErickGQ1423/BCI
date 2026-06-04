@@ -16,6 +16,7 @@ Referencia: Rivet et al. (2009) — xDAWN algorithm for evoked potentials
 
 import os
 import numpy as np
+import bci_runtime_env
 import mne
 import matplotlib.pyplot as plt
 from scipy.linalg import eigh

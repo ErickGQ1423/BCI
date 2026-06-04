@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pickle
+import bci_runtime_env
 import mne
 from sklearn.model_selection import KFold
 from sklearn.metrics import accuracy_score

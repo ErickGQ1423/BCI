@@ -8,6 +8,7 @@ Pipeline: xDAWN (sobre PICKS) → amplitudes en T_POINTS → LDA Ledoit-Wolf
 import os
 import pickle
 import numpy as np
+import bci_runtime_env
 import mne
 from mne.preprocessing import Xdawn
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis

@@ -13,6 +13,12 @@ DATA_DIR = "/home/lab-admin/Documents/CurrentStudy"
 SIMULATION_MODE = False
 #TRAINING_SUBJECT = "CNV_PILOT_SUBJ_012"
 TRAINING_SUBJECT = "CNV_MAESTRO"
+
+# Recording/logging source. Keep this separate from TRAINING_SUBJECT so the
+# online decoder can use a shared model while LabRecorder saves under the
+# participant/session being recorded.
+RECORDING_DATA_DIR = "/home/lab-admin/Documents/CNVStudy"
+RECORDING_SUBJECT = "CNV_PILOT_SUBJ_012"
 # EEG Settings
 CAP_TYPE = 32  
 LOWCUT = 0.1  # Hz
@@ -58,20 +64,39 @@ CLASSIFY_WINDOW = 2500  # Duration of EEG data window for classification (millis
 FILTER_BUFFER_SIZE = 3072 #6s at 512 Hz
 BASELINE_DURATION = 1 #seconds
 ACCURACY_THRESHOLD = 0.8  # OBS Accuracy threshold to determine "Correct" (plan to obsolete)
-THRESHOLD_MI = 0.6 #Threshold for MI "correct"
-THRESHOLD_REST = 0.6 #Threshold for REST "Correct"
+THRESHOLD_MI = 0.50 #Threshold for MI "correct"
+THRESHOLD_REST = 0.7 #Threshold for REST "Correct"
 RELAXATION_RATIO = 0.0 # relaxation ratio for sustained MI during movement
 MIN_PREDICTIONS = 8 # Min number of predictions during Online experiment before the decoder can end early
+MIN_FINAL_PREDICTIONS = 8 # Min valid predictions required to accept a final prep decision
+FINAL_DECISION_MIN_VOTE_FRACTION = 0.60 # Majority strength required for final prep decision
+EARLYSTOP_CONSECUTIVE_PREDICTIONS = 3 # Recent same-class predictions required for early stop
 STEP_SIZE = 1/16
 CLASSIFICATION_OFFSET = 0 # Offset for "classification window" starting point
 CLASSIFICATION_SCHEME_OPT = "TIMESERIES"
 #CLASSIFICATION_SCHEME_OPT = "FREQUENCY"
+# Preparation decoder timing:
+# "M2_CUMULATIVE" = online M2: model k receives data accumulated from prep onset to step k.
+# "FROZEN_EPOCH_DEBUG" = legacy/debug path using the epoch captured at prep onset.
+PREP_DECODER_MODE = "M2_CUMULATIVE"
 SURFACE_LAPLACIAN_TOGGLE = 0 #apply the surface laplacian spatial filter during online
 SELECT_MOTOR_CHANNELS = 1 # toggle to select motor channels or not (can be used to select other channels too)
 SELECT_ERRP_CHANNELS = 0 #toggle to select ERRP channels
 INTEGRATOR_ALPHA = 0.90 # defines how fast the accumulated probability may change as new data comes in
 SHRINKAGE_PARAM = 0.02 # hyperparameter for shrinkage regularization
 LEDOITWOLF = 0 #Set to true to use ledoit wolf shrinkage regularization - otherwise pyreimannian will be used w/ shrinkage param shown above
+
+# EEG signal quality gate. These checks run on the model channels before
+# online classification/recentering. Units follow the live eegoSports stream
+# display (uV in this setup).
+EEG_QUALITY_GATE = True
+EEG_QUALITY_MIN_PTP_UV = 0.2
+EEG_QUALITY_MAX_PTP_UV = 150.0
+EEG_QUALITY_MAX_RMS_UV = 50.0
+EEG_QUALITY_MAX_ABS_UV = 150.0
+EEG_QUALITY_BAD_CHANNELS_TO_REJECT = 2 # More flexible: reject only if this many model channels are bad
+EEG_QUALITY_HARD_MAX_ABS_UV = 500.0 # Safety cutoff: one channel above this rejects immediately
+PREP_COUNTDOWN_BAR_HEIGHT = 44
 
 # adaptive Recentering parameters for config
 RECENTERING = 1 # adaptive recentering toggle
@@ -201,5 +226,3 @@ ARDUINO_BAUD = 9600         # Arduino communication baud rate
 # Command mapping based on classifier output
 ARDUINO_CMD_MI   = b"1"     # Movement detected (label 200)
 ARDUINO_CMD_REST = b"0"     # Rest or ambiguous state detected
-
-SIMULATION_MODE = False
