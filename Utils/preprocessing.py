@@ -32,7 +32,11 @@ def concatenate_streams(eeg_streams, marker_streams):
 
 def get_valid_channel_mask_and_metadata(eeg_data, channel_names, fs, drop_mastoids=True):
     # 1) Normalize names here (single source of truth)
-    rename_dict = {"FP1":"Fp1","FPZ":"Fpz","FP2":"Fp2","FZ":"Fz","CZ":"Cz","PZ":"Pz","POZ":"POz","OZ":"Oz"}
+    rename_dict = {
+        "FP1": "Fp1", "FPZ": "Fpz", "FP2": "Fp2",
+        "FZ": "Fz", "FCZ": "FCz", "CZ": "Cz", "CPZ": "CPz",
+        "PZ": "Pz", "POZ": "POz", "OZ": "Oz",
+    }
     norm_names = [rename_dict.get(ch, ch) for ch in channel_names]
 
     # 2) Drop non-EEG

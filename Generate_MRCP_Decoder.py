@@ -14,8 +14,8 @@ from mne.viz import plot_topomap
 # ============================================================
 # CONFIG
 # ============================================================
-XDF_FILE = "/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf"
-
+#XDF_FILE = "/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf"
+XDF_FILE = "/home/lab-admin/Documents/CurrentStudy/sub-CNV_PILOT_SUBJ_012/ses-S006/eeg/sub-CNV_PILOT_SUBJ_012_ses-S006_task-Default_run-001_eeg.xdf"
 # Force trigger ids to int
 EVENT_REST = int(config.TRIGGERS["REST_BEGIN"])  # e.g., 100
 EVENT_MOV  = int(config.TRIGGERS["MI_BEGIN"])    # e.g., 200
@@ -669,18 +669,24 @@ def inspect_evoked_with_topomaps(ev_rest, ev_mov, times, title_prefix="MRCP",vmi
             # 4) Convertir vector → Evoked artificial
             ev_temp = mne.EvokedArray(vec[:, np.newaxis], info, tmin=0.0)
 
-            # 5) Render topoplot
-            fig = mne.viz.plot_evoked_topomap(
-                ev_temp,
+            # 5) Render topoplot. MNE versions differ here: newer releases use
+            # vlim=(vmin, vmax), while older code often used vmin/vmax.
+            topo_kwargs = dict(
                 times=[0.0],
                 scalings=dict(eeg=1),
                 cmap="RdBu_r",
                 colorbar=True,
                 units=dict(eeg="µV"),
-                vmin=vmin,
-                vmax=vmax,
-                show=False
+                show=False,
             )
+            if vmin is not None or vmax is not None:
+                topo_kwargs["vlim"] = (vmin, vmax)
+
+            try:
+                fig = mne.viz.plot_evoked_topomap(ev_temp, **topo_kwargs)
+            except TypeError:
+                topo_kwargs.pop("vlim", None)
+                fig = mne.viz.plot_evoked_topomap(ev_temp, **topo_kwargs)
             fig.set_size_inches(6, 6)
             fig.suptitle(f"{title_prefix} | {label} | t = {t:.3f}s")
             plt.show(block=True)

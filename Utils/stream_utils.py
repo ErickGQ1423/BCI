@@ -134,21 +134,30 @@ def load_xdf(file_path, dejitter=False, sync=False, report=True,
     if not marker_candidates:
         raise ValueError("No Marker streams found in the XDF file.")
 
-    # 1) Prefer MarkerStream explicitly
+    # 1) Prefer MarkerStream explicitly. Some XDF files contain more than one
+    # stream with the same marker name; choose the non-empty / largest one.
     marker_stream = None
     for pref in marker_name_preference:
-        for name, s in marker_candidates:
-            if name == pref:
-                marker_stream = s
-                break
+        preferred = [
+            s for name, s in marker_candidates
+            if name == pref
+        ]
+        if preferred:
+            marker_stream = max(
+                preferred,
+                key=lambda ss: len(ss.get("time_series", []))
+            )
         if marker_stream is not None:
             break
 
-    # 2) Fallback: choose marker stream with most channels (MarkerStream has 4)
+    # 2) Fallback: choose marker stream with most samples, then most channels.
     if marker_stream is None:
         marker_stream = max(
             (s for _, s in marker_candidates),
-            key=lambda ss: int(ss["info"].get("channel_count", [0])[0])
+            key=lambda ss: (
+                len(ss.get("time_series", [])),
+                int(ss["info"].get("channel_count", [0])[0]),
+            )
         )
 
     # ---- keep your report block unchanged ----

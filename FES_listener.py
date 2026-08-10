@@ -50,7 +50,13 @@ def trigger_fes(channel_name, mode = 'SENSORY'):
                 print("Received FES_STOP. Stopping stimulation.")
                 break
 
-        FES_device.pulse(channel_name, current, pulse_width)
+        pulse_result = FES_device.pulse(channel_name, current, pulse_width)
+        if pulse_result != 0:
+            print(
+                f"FES pulse failed on {channel_name}. "
+                "Stopping stimulation; check electrodes and cable."
+            )
+            break
         time.sleep(max(0, (1 / FES_frequency) - (time.time() - cycle_time)))
         #time.sleep(1/FES_frequency)
     print(f"Stimulation on {channel_name} completed. Returning to listening mode.")
@@ -73,4 +79,3 @@ while True:
         print(f"Received unrecognized trigger: {trigger}")
 
     # After processing the trigger, the script continues listening for new triggers
-

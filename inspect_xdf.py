@@ -1,6 +1,7 @@
 import pyxdf
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 # === CONFIGURACIÓN ===
 # file_path = "/home/lab-admin/Documents/CurrentStudy/sub-P001/ses-S002/eeg/sub-P001_ses-S002_task-Default_run-001_eeg.xdf"
@@ -8,9 +9,11 @@ import matplotlib.pyplot as plt
 # "sub-CNV_PILOT_SUBJ_003/ses-S002OFFLINE_NOGLOVE/eeg/" \
 # "sub-CNV_PILOT_SUBJ_003_ses-S002OFFLINE_NOGLOVE_task-Default_run-001_eeg.xdf"
 
-file_path =  "/home/lab-admin/Documents/CurrentStudy/" \
-    "sub-S26CLASS_SUBJ_008/ses-borrar/eeg/" \
-    "sub-S26CLASS_SUBJ_008_ses-borrar_task-Default_run-001_eeg.xdf"
+file_path = Path(
+    "/home/lab-admin/Documents/CurrentStudy/"
+    "sub-CNV_PILOT_SUBJ_012/ses-S007_OFFLINE/eeg/"
+    "sub-CNV_PILOT_SUBJ_012_ses-S007_OFFLINE_task-Default_run-001_eeg.xdf"
+)
 
 # === CARGA DEL ARCHIVO ===
 streams, header = pyxdf.load_xdf(file_path)
@@ -165,20 +168,34 @@ else:
 # =============================================================
 # === VISUALIZACIÓN: STACK DE CANALES EEG =====================
 # =============================================================
-TOTAL = data.shape[0]
+channels_to_plot = [
+    "FC3", "FC1", "FCz",
+    "C3", "C1", "Cz",
+    "CP3", "CP1", "CPz",
+    "AUX7",
+]
 
-N = 7           # cuántos canales quieres ver
-FIRST = TOTAL - N
-if FIRST < 0:
-    FIRST = 0
+if ch_names is None:
+    raise RuntimeError("El archivo XDF no contiene nombres de canales.")
+
+channel_lookup = {name.upper(): idx for idx, name in enumerate(ch_names)}
+missing_channels = [
+    name for name in channels_to_plot if name.upper() not in channel_lookup
+]
+if missing_channels:
+    raise RuntimeError(
+        "No se encontraron estos canales: " + ", ".join(missing_channels)
+    )
+
+selected_indices = [
+    channel_lookup[name.upper()] for name in channels_to_plot
+]
 
 SCALE = 1.0
 DECIM = max(1, len(ts_seg) // 5000)   # decimado más agresivo
 
-sel = slice(FIRST, min(FIRST + N, TOTAL))
-
 t_plot = t_rel[::DECIM]
-Y = (data_seg[sel, ::DECIM] * SCALE)
+Y = data_seg[selected_indices, ::DECIM] * SCALE
 
 # asegurar que Y sea 2D
 if Y.ndim == 1:
@@ -192,8 +209,7 @@ offset = 5.0
 
 plt.figure(figsize=(14, 6))
 for i in range(n_sel):
-    idx_ch = FIRST + i
-    lbl = ch_names[idx_ch] if ch_names and idx_ch < len(ch_names) else f"Ch{idx_ch}"
+    lbl = channels_to_plot[i]
     plt.plot(t_plot, Y[i] + i * offset, linewidth=0.8, label=lbl, rasterized=True)
 
 # --- dibujar markers como líneas verticales en la gráfica de EEG ---
@@ -205,11 +221,10 @@ if markers is not None:
 
 plt.yticks(
     [i * offset for i in range(n_sel)],
-    [ch_names[FIRST + i] if ch_names and (FIRST + i) < len(ch_names) else f"Ch{FIRST + i}"
-     for i in range(n_sel)]
+    channels_to_plot,
 )
 plt.xlabel("Tiempo (s) relativo al inicio del segmento")
-plt.title(f"EEG – canales {FIRST}..{FIRST + n_sel - 1} (segmento {t0}-{t1}s)")
+plt.title(f"EEG motor central y AUX7 (segmento {t0:.1f}-{t1:.1f} s)")
 plt.grid(True, linestyle=":", alpha=0.3)
 plt.tight_layout()
 plt.show()

@@ -1,4 +1,5 @@
 from collections import deque
+import time
 import numpy as np
 import bci_runtime_env
 import mne
@@ -31,7 +32,8 @@ class EEGStreamState:
             lowcut=self.lowcut,
             highcut=self.highcut,
             notch_freqs=[60],
-            notch_q=30
+            notch_q=30,
+            order=getattr(config, "ONLINE_FILTER_ORDER", 4),
         )
         self.filter_state = {}
 
@@ -39,12 +41,16 @@ class EEGStreamState:
         self.filtered_buffer = deque(maxlen=config.FILTER_BUFFER_SIZE)
         self.timestamps = deque(maxlen=config.FILTER_BUFFER_SIZE)
         self.baseline_mean = None
+        self.last_chunk_monotonic = None
 
         # Channel selection
         self.channel_names = None
         self.valid_channel_indices = None
         self.subset_indices = None
-        self.final_indices = None  # NEW: final indices used for slicing in real-time
+        self.final_indices = None  # legacy/original-stream indices
+        self.car_reference_indices = None
+        self.car_reference_channel_names = None
+        self.car_reference_mode = getattr(config, "ONLINE_CAR_REFERENCE", "selected")
 
         self.first_chunk_processed = False
 
@@ -69,25 +75,62 @@ class EEGStreamState:
                 self.valid_channel_indices = valid_indices
                 self.channel_names = valid_channel_names
 
-                # Optional: select only motor-related EEG channels
+                # Optional: select only motor-related EEG channels.  Keep
+                # subset_indices relative to the valid EEG array so we can
+                # optionally perform CAR on all valid EEG first, matching the
+                # offline MotorCap pipeline.
                 if self.mode == "motor":
                     motor_raw = select_channels(valid_raw, keep_channels = self.config.MOTOR_CHANNEL_NAMES)
-                    self.subset_indices = [self.channel_names.index(ch) for ch in motor_raw.ch_names]
+                    self.subset_indices = [valid_channel_names.index(ch) for ch in motor_raw.ch_names]
                     self.channel_names = motor_raw.ch_names
                     self.final_indices = [self.valid_channel_indices[i] for i in self.subset_indices]
                 elif self.mode == "errp":
                     errp_raw = select_channels(valid_raw, keep_channels = self.config.ERRP_CHANNEL_NAMES)
-                    self.subset_indices = [self.channel_names.index(ch) for ch in errp_raw.ch_names]
+                    self.subset_indices = [valid_channel_names.index(ch) for ch in errp_raw.ch_names]
                     self.channel_names = errp_raw.ch_names
                     self.final_indices = [self.valid_channel_indices[i] for i in self.subset_indices]
                 
                 else:
+                    self.subset_indices = None
                     self.final_indices = self.valid_channel_indices
+
+                # Match the offline TimePoints CAR base: after removing
+                # non-EEG/mastoids upstream, also exclude edge/frontal-temporal
+                # channels before computing the online CAR.  This keeps the
+                # operational model channels unchanged; it only changes the
+                # reference average used when ONLINE_CAR_REFERENCE="all_valid_eeg".
+                car_drop_channels = set(
+                    getattr(self.config, "ONLINE_CAR_DROP_CHANNELS", [])
+                )
+                self.car_reference_channel_names = [
+                    ch for ch in valid_channel_names if ch not in car_drop_channels
+                ]
+                self.car_reference_indices = [
+                    self.valid_channel_indices[valid_channel_names.index(ch)]
+                    for ch in self.car_reference_channel_names
+                ]
+                if self.car_reference_mode == "all_valid_eeg" and self.channel_names:
+                    self.subset_indices = [
+                        self.car_reference_channel_names.index(ch)
+                        for ch in self.channel_names
+                    ]
 
                 self.first_chunk_processed = True
             # === Fast real-time slicing using precomputed indices ===
-            if self.final_indices is not None:
+            # Keep the current online operational pipeline unchanged:
+            # choose the reference set, apply CAR on the raw chunk, then run
+            # the causal streaming filters. If ONLINE_CAR_REFERENCE=
+            # "all_valid_eeg", CAR is computed across all valid EEG channels
+            # before selecting the motor/model subset; "selected" keeps the
+            # legacy selected-channel reference.
+            car_all_valid = self.car_reference_mode == "all_valid_eeg"
+            if car_all_valid and self.car_reference_indices is not None:
+                raw_chunk = raw_chunk[self.car_reference_indices]
+            elif self.final_indices is not None:
                 raw_chunk = raw_chunk[self.final_indices]
+
+            # === CAR — Common Average Reference BEFORE filtering ===
+            raw_chunk = raw_chunk - raw_chunk.mean(axis=0, keepdims=True)
 
             # === Apply streaming filters ===
             filtered_chunk, self.filter_state = apply_streaming_filters(
@@ -101,28 +144,39 @@ class EEGStreamState:
                 self.baseline_mean = None
                 return
 
-            # === CAR — Common Average Reference ===
-            filtered_chunk -= filtered_chunk.mean(axis=0, keepdims=True)
+            if car_all_valid and self.subset_indices is not None:
+                filtered_chunk = filtered_chunk[self.subset_indices]
 
             # === Append filtered samples to buffer ===
             for i in range(filtered_chunk.shape[1]):
                 self.filtered_buffer.append(filtered_chunk[:, i])
                 self.timestamps.append(timestamps[i])
+            self.last_chunk_monotonic = time.monotonic()
 
         except Exception as e:
             if self.logger:
                 self.logger.log_event(f"⚠️ Failed to update EEG stream: {e}")
 
 
-    def compute_baseline(self, duration_sec=1.0):
+    def compute_baseline(self, duration_sec=1.0, end_offset_sec=0.0):
+        self.assert_stream_fresh()
         samples_needed = int(duration_sec * self.config.FS)
-        if len(self.filtered_buffer) < samples_needed:
+        offset_samples = int(end_offset_sec * self.config.FS)
+        total_needed = samples_needed + offset_samples
+        if len(self.filtered_buffer) < total_needed:
             raise ValueError("Not enough data in buffer to compute baseline.")
 
-        buffer_array = np.array(self.filtered_buffer)[-samples_needed:]
+        buffer = np.array(self.filtered_buffer)
+        end_idx = len(buffer) - offset_samples if offset_samples > 0 else len(buffer)
+        start_idx = end_idx - samples_needed
+        if start_idx < 0 or end_idx <= start_idx:
+            raise ValueError("Invalid baseline window.")
+
+        buffer_array = buffer[start_idx:end_idx]
         self.baseline_mean = buffer_array.mean(axis=0, keepdims=True).T  # shape: (n_channels, 1)
 
     def get_baseline_corrected_window(self, window_size_samples):
+        self.assert_stream_fresh()
         if len(self.filtered_buffer) < window_size_samples:
             raise ValueError("Not enough data in buffer for window.")
 
@@ -130,6 +184,21 @@ class EEGStreamState:
         if self.baseline_mean is not None:
             window -= self.baseline_mean
         return window, list(self.timestamps)[-window_size_samples:]
+
+    def assert_stream_fresh(self, max_age_sec=None):
+        """Fail closed instead of classifying a stale LSL buffer."""
+        if max_age_sec is None:
+            max_age_sec = float(
+                getattr(self.config, "EEG_STREAM_MAX_AGE_S", 1.0)
+            )
+        if self.last_chunk_monotonic is None:
+            raise RuntimeError("EEG stream has not delivered any samples.")
+        age = time.monotonic() - self.last_chunk_monotonic
+        if age > max_age_sec:
+            raise RuntimeError(
+                f"EEG stream is stale: last chunk received {age:.3f} s ago "
+                f"(limit={max_age_sec:.3f} s)."
+            )
     
     def _get_channel_names(self):
         """

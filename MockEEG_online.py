@@ -6,15 +6,19 @@ import time
 import random
 import numpy as np
 from pylsl import StreamInfo, StreamOutlet
+import config
 
 def main():
     # Canales que espera EEGStreamState para CNV
-    ch_names = [
+    base_ch_names = [
         'Fp1', 'Fpz', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
         'FC5', 'FC1', 'FC2', 'FC6', 'T7', 'C3', 'Cz', 'C4',
         'T8', 'CP5', 'CP1', 'CP2', 'CP6', 'P7', 'P3', 'Pz',
         'P4', 'P8', 'POz', 'O1', 'Oz', 'O2', 'M1', 'M2'
     ]
+    # Keep the mock stream compatible with the currently trained online model.
+    # This only affects simulation; real EEG channel names come from the amplifier.
+    ch_names = list(dict.fromkeys(base_ch_names + list(config.MOTOR_CHANNEL_NAMES)))
     n_channels = len(ch_names)
     fs = 512
 

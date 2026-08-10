@@ -1,6 +1,12 @@
 import pygame
 import config
 
+def _feedback_fill_alpha(fill_alpha=None):
+    if fill_alpha is None:
+        fill_alpha = getattr(config, "FEEDBACK_FILL_ALPHA", 180)
+    return int(max(0, min(255, fill_alpha)))
+
+
 def draw_time_balls(
     ball_state,
     screen_width,
@@ -80,7 +86,7 @@ def draw_time_balls(
             else:
                 pygame.draw.circle(surf, ball_color, (stack_x, ball_y), ball_radius)
 
-def draw_arrow_fill(progress, screen_width, screen_height, show_threshold=True):
+def draw_arrow_fill(progress, screen_width, screen_height, show_threshold=True, fill_alpha=None):
     ball_radius = 200  # Base measurement
     bar_width, bar_length = ball_radius * 2, ball_radius * 2
     offset = ball_radius * 2
@@ -107,7 +113,11 @@ def draw_arrow_fill(progress, screen_width, screen_height, show_threshold=True):
         bar_x - bar_length // 2, bar_y - bar_width // 2,
         fill_length, bar_width
     )
-    pygame.draw.rect(pygame.display.get_surface(), (255, 0, 0), filled_rect)
+    if fill_length > 0:
+        alpha = _feedback_fill_alpha(fill_alpha)
+        fill_surface = pygame.Surface((fill_length, bar_width), pygame.SRCALPHA)
+        fill_surface.fill((255, 0, 0, alpha))
+        pygame.display.get_surface().blit(fill_surface, filled_rect.topleft)
 
     # Draw success threshold line if enabled
     if show_threshold:
@@ -123,7 +133,7 @@ def draw_arrow_fill(progress, screen_width, screen_height, show_threshold=True):
             )
 
 
-def draw_ball_fill(progress, screen_width, screen_height, show_threshold=True):
+def draw_ball_fill(progress, screen_width, screen_height, show_threshold=True, fill_alpha=None):
     ball_radius = 200
     offset = ball_radius * 2
     if config.ARM_SIDE == "Left":
@@ -136,7 +146,8 @@ def draw_ball_fill(progress, screen_width, screen_height, show_threshold=True):
     water_surface = pygame.Surface((ball_radius * 2, ball_radius * 2), pygame.SRCALPHA)
     fill_height = int(progress * ball_radius * 2)
     water_rect = pygame.Rect(0, ball_radius * 2 - fill_height, ball_radius * 2, fill_height)
-    pygame.draw.rect(water_surface, (0, 120, 255, 180), water_rect)
+    alpha = _feedback_fill_alpha(fill_alpha)
+    pygame.draw.rect(water_surface, (0, 120, 255, alpha), water_rect)
     mask_surface = pygame.Surface((ball_radius * 2, ball_radius * 2), pygame.SRCALPHA)
     pygame.draw.circle(mask_surface, (255, 255, 255, 255), (ball_radius, ball_radius), ball_radius)
     water_surface.blit(mask_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)

@@ -47,7 +47,8 @@ from sklearn.calibration import CalibratedClassifierCV
 # 1. IDENTIDAD Y CONFIGURACIÓN
 # ============================================================
 subject = "CNV_PILOT_SUBJ_012"
-session  = "S001OFFLINE"     # ← cambiar a S002OFFLINE_NOGLOVE según sesión
+session  = "S005_OFFLINE"     # ← cambiar a S002OFFLINE_NOGLOVE según sesión
+base_dir = "/home/lab-admin/Documents/CurrentStudy"
 
 CHANNELS_TO_DROP        = ['M1', 'M2', 'T7', 'T8', 'Fp1', 'Fpz', 'Fp2']
 CHANNELS_TO_INTERPOLATE = []
@@ -69,9 +70,12 @@ NON_EEG_CHANNELS = {"AUX1", "AUX2", "AUX3", "AUX8", "AUX9", "TRIGGER"}
 TARGET_MARKERS   = [100, 200]
 
 xdf_dir = os.path.join(
-    "/home/lab-admin/Documents/CNVStudy",
+    base_dir,
     f"sub-{subject}", f"ses-{session}", "eeg/"
 )
+if not os.path.isdir(xdf_dir):
+    raise FileNotFoundError(f"XDF directory does not exist: {xdf_dir}")
+
 xdf_files = sorted(
     [os.path.join(xdf_dir, f) for f in os.listdir(xdf_dir) if f.endswith(".xdf")]
 )

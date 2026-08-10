@@ -9,26 +9,27 @@
 
 
 WORKING_DIR = "/home/lab-admin/BCI_project/BCI"
-DATA_DIR = "/home/lab-admin/Documents/CurrentStudy"
+DATA_DIR = "/home/lab-admin/Documents/CNVStudy"
 SIMULATION_MODE = False
 #TRAINING_SUBJECT = "CNV_PILOT_SUBJ_012"
-TRAINING_SUBJECT = "CNV_MAESTRO"
-
+TRAINING_SUBJECT = "CNV_PILOT_SUBJ_016"
 # Recording/logging source. Keep this separate from TRAINING_SUBJECT so the
 # online decoder can use a shared model while LabRecorder saves under the
 # participant/session being recorded.
 RECORDING_DATA_DIR = "/home/lab-admin/Documents/CNVStudy"
-RECORDING_SUBJECT = "CNV_PILOT_SUBJ_012"
+RECORDING_SUBJECT = "CNV_PILOT_SUBJ_022"
 # EEG Settings
 CAP_TYPE = 32  
 LOWCUT = 0.1  # Hz
-HIGHCUT = 1.0  # Hz
+HIGHCUT = 2.0  # Hz; aligned with paper-like expert+calibration training.
+ONLINE_FILTER_ORDER = 2 # Streaming Butterworth order; matches paper-like training order.
 LOWCUT_ERRP = 1 #Hz
 HIGHCUT_ERRP = 10 #Hz
 FS = 512  # Sampling frequency (Hz)
+EEG_STREAM_MAX_AGE_S = 1.0 # Abort online decisions if LSL has delivered no samples for this long.
 #MOTOR_CHANNEL_NAMES = ['FC1','FC2','C3', 'Cz', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P7','P3', 'Pz', 'P4', 'P8', 'POz']
 #MOTOR_CHANNEL_NAMES = ['FC5', 'FC1', 'C3', 'Cz', 'CP5', 'CP1', 'Fz']
-MOTOR_CHANNEL_NAMES = ['FC5', 'FC1', 'C3', 'Cz', 'CP1', 'Fz']
+MOTOR_CHANNEL_NAMES = ['FC3', 'FC1', 'FCz', 'C3', 'C1', 'Cz', 'CP3', 'CP1', 'CPz']
 
 ERRP_CHANNEL_NAMES = ['F3', 'Fz', 'F4', 'FC1', 'FC2', 'Cz']
 EOG_CHANNEL_NAMES = ['AUX1'] # List of EOG channel names to use
@@ -38,13 +39,14 @@ EOG_TOGGLE = 0  # Toggle to enable or disable EOG processing (1 = enabled, 0 = d
 # Experiment Parameters
 ARM_SIDE = "Right"
 EXPERIMENT_TYPE = "BASE" # BIMANUAL or BASE
-TOTAL_TRIALS = 10   # Total number of trials
+TOTAL_TRIALS = 20   # Total number of trials
 TOTAL_TRIALS_ERRP = 45 # Total number of trials for ErrP experiment
 MAX_REPEATS = 3  # Maximum consecutive repeats of the same condition
 N_SPLITS = 5  # Number of splits for KFold cross-validation
 TIME_MI = 5 # time for motor imagery and rest
 TIME_ROB =  5# time allocated for robot to move
 TIME_STATIONARY = 1 # time for stationary feedback after no movement/failed movement trial
+INTERTRIAL_DURATION = 5.0 # relaxation/fixation between trials; longer helps reduce MI carry-over
 TIME_MASTER_MOVE = 5 # allowed timing for participant to position robot with master arm. Bimanual experiment.
 TIMING = True #obsolete
 SHAPE_MAX = 0.7 #maximum fill
@@ -60,17 +62,40 @@ EARLYSTOP_MODE = "correct_only"
 
 
 # Classification Parameters
+# Stable pilot condition:
+# - Control uses the best current classical model from offline LOGO.
+# - MDM/LR/SVM observer summaries stay in the logs for comparison.
+# - Keep these fixed across participant runs unless starting a new condition.
 CLASSIFY_WINDOW = 2500  # Duration of EEG data window for classification (milliseconds)
 FILTER_BUFFER_SIZE = 3072 #6s at 512 Hz
 BASELINE_DURATION = 1 #seconds
+ONLINE_CAR_REFERENCE = "all_valid_eeg" # Current online: CAR before streaming filters; use "selected" for legacy selected-channel CAR.
+ONLINE_CAR_DROP_CHANNELS = ['T7', 'T8', 'Fp1', 'Fpz', 'Fp2'] # Match TimePoints CAR base; M1/M2/AUX are already excluded upstream.
+ONLINE_BASELINE_DURATION = 2.0 # Match offline baseline(-5,-3): 2 s baseline before prep.
+ONLINE_BASELINE_END_OFFSET = 0.5 # Baseline ends 0.5 s before prep onset to avoid prep/transient contamination.
 ACCURACY_THRESHOLD = 0.8  # OBS Accuracy threshold to determine "Correct" (plan to obsolete)
-THRESHOLD_MI = 0.50 #Threshold for MI "correct"
-THRESHOLD_REST = 0.7 #Threshold for REST "Correct"
+THRESHOLD_MI = 0.6 #Threshold for MI "correct"
+THRESHOLD_REST = 0.50 #Threshold for REST "Correct"
+# Decisión primaria en el endpoint MDM congelado.
+# S021 Replay WarmUp: MDM muestra P(MI) inflada en REST; threshold alto
+# mejora REST sin perder MI para esta prueba online.
+ENDPOINT_MDM_MI_THRESHOLD = 0.85
+ENDPOINT_MDM_REST_THRESHOLD = 0.85
+# Rescate MI basado en la ventana fuerte observada en Replay.
+# Si el endpoint no alcanza MI, 2 votos MDM fuertes entre -1.25 y -0.75 s
+# también aceptan MI. REST sigue siendo ausencia de evidencia MI fuerte.
+MDM_TEMPORAL_RESCUE_ENABLED = True
+MDM_TEMPORAL_RESCUE_START = -1.50
+MDM_TEMPORAL_RESCUE_END = -0.50
+MDM_TEMPORAL_RESCUE_REQUIRED_VOTES = 4
+MDM_TEMPORAL_RESCUE_THRESHOLD = 0.85
 RELAXATION_RATIO = 0.0 # relaxation ratio for sustained MI during movement
-MIN_PREDICTIONS = 8 # Min number of predictions during Online experiment before the decoder can end early
-MIN_FINAL_PREDICTIONS = 8 # Min valid predictions required to accept a final prep decision
+MIN_PREDICTIONS = 99 # Block legacy early stop; endpoint + temporal rescue control this test.
+MIN_FINAL_PREDICTIONS = 6 # Min valid predictions required to accept a final prep decision
 FINAL_DECISION_MIN_VOTE_FRACTION = 0.60 # Majority strength required for final prep decision
-EARLYSTOP_CONSECUTIVE_PREDICTIONS = 3 # Recent same-class predictions required for early stop
+EARLYSTOP_CONSECUTIVE_PREDICTIONS = 2 # Recent same-class predictions required for early stop
+OBSERVER_MIN_STEPS = 0 # Min M2 steps required for observer model trial decisions
+EARLY_RAW_DECISION_MAX_STEPS = 8 # Observer-only RAW summary using first N M2 steps; does not control feedback
 STEP_SIZE = 1/16
 CLASSIFICATION_OFFSET = 0 # Offset for "classification window" starting point
 CLASSIFICATION_SCHEME_OPT = "TIMESERIES"
@@ -79,6 +104,25 @@ CLASSIFICATION_SCHEME_OPT = "TIMESERIES"
 # "M2_CUMULATIVE" = online M2: model k receives data accumulated from prep onset to step k.
 # "FROZEN_EPOCH_DEBUG" = legacy/debug path using the epoch captured at prep onset.
 PREP_DECODER_MODE = "M2_CUMULATIVE"
+PREP_CONTROL_MODEL = "MDM" # Online feedback control: MDM, LDA_shrink/LDA, LDA3, LR, or SVM.
+PREP_EARLY_STOP_ENABLED = False # Activa feedback al superar umbral con evidencia sostenida.
+SHADOW_MODEL_ANALYSIS_ENABLED = True # Diagnóstico target-independent; nunca controla el sistema.
+ENDPOINT_VALIDATION_ENABLED = False # Disabled for the first combined-model online test; LDA/LR remain diagnostic observers.
+EARLYSTOP_VALIDATION_ENABLED = False # LDA/LR también validan early stop MDM; si ambos discrepan => AMBIGUOUS.
+# Congela el control secuencial en el mejor endpoint LOGO de S012.
+# Los observadores de ventana completa se calculan igualmente al final.
+PREP_CONTROL_ENDPOINT = -0.50
+WARMUP_OBSERVER_ENABLED = False
+WARMUP_MODEL_PATH = "/home/lab-admin/Documents/CurrentStudy/sub-CNV_PILOT_SUBJ_012/models/sub-CNV_PILOT_SUBJ_012_model_warmup_S005_OFFLINE.pkl"
+ONLINE_MODEL_PATH = "/home/lab-admin/Documents/CNVStudy/sub-CNV_PILOT_SUBJ_021/models/sub-CNV_PILOT_SUBJ_021_model_motorcap_S001_OFFLINE_FES_GLOVE.pkl"
+OFFLINE_FEEDBACK_FILL_ALPHA = 255 # 0 transparent, 255 opaque for offline MI/REST fill visuals
+OFFLINE_REST_NEUTRAL_VISUAL = True # Offline only: keep REST triggers/timing but hide REST text/blue visual cue.
+ONLINE_REST_NEUTRAL_PREP_VISUAL = True # Online only: keep REST prep predictions/triggers but show neutral intertrial visual.
+ONLINE_PREP_FEEDBACK_FILL_ALPHA = 20 # 0 transparent, 255 opaque for online preparation fill visuals
+ONLINE_EXEC_FEEDBACK_FILL_ALPHA = 255 # 0 transparent, 255 opaque for online execution/reward fill visuals
+ONLINE_PREP_VISUAL_RAMP_MS = 250 # Suavizado visual; no modifica decisiones, umbrales ni FES
+ONLINE_FEEDBACK_FILL_ALPHA = ONLINE_PREP_FEEDBACK_FILL_ALPHA # Backward-compatible online default
+FEEDBACK_FILL_ALPHA = ONLINE_PREP_FEEDBACK_FILL_ALPHA # Backward-compatible default for shared/legacy scripts
 SURFACE_LAPLACIAN_TOGGLE = 0 #apply the surface laplacian spatial filter during online
 SELECT_MOTOR_CHANNELS = 1 # toggle to select motor channels or not (can be used to select other channels too)
 SELECT_ERRP_CHANNELS = 0 #toggle to select ERRP channels
@@ -99,20 +143,32 @@ EEG_QUALITY_HARD_MAX_ABS_UV = 500.0 # Safety cutoff: one channel above this reje
 PREP_COUNTDOWN_BAR_HEIGHT = 44
 
 # adaptive Recentering parameters for config
-RECENTERING = 1 # adaptive recentering toggle
+RECENTERING = 1 # Enable online adaptive recentering for M2/MDM.
+RECENTERING_MIN_TRIALS = 2 # Observe this many usable trials before the first update.
+RECENTERING_ALPHA = 0.05 # Small geodesic update; avoids one trial dominating Prev_T.
+RECENTERING_REQUIRE_NON_AMBIGUOUS = True
+RECENTERING_REQUIRE_CORRECT = True
+RECENTERING_MIN_CONFIDENCE = 0.55
+M2_INIT_RECENTER_FROM_TRAINING = True # Initialize M2 whitening from the training Riemannian mean when available.
+M2_USE_SAVED_ADAPTIVE_RECENTER = True # Continue from adaptive_T.pkl when available; otherwise start from training whitening.
+ADAPTIVE_CONTINUITY_MODE = "fresh" # "current_session", "previous_same_condition", or "fresh".
+ADAPTIVE_RECENTER_LOAD_PATH = None # Optional manual override. Keep None for automatic subject/session/condition handling.
 USE_CONFIDENCE_GATE = 0 #update Previous transform ONLY in the event of lean condition
 UPDATE_DURING_MOVE = 0 #this toggle defines whether or not the reimannian adaptive recentering scheme updates when the robot is moving. 0 = no, 1 = yes. The algo will update always during MI
-SAVE_ADAPTIVE_T = False #this toggle saves "Adaptive_T" to the EEG directory during an active session between runs - this way, we can continue w/ the current estimated whitening transform. Disabling this will start a fresh transform each time
+SAVE_ADAPTIVE_T = True #this toggle saves "Adaptive_T" to the EEG directory during an active session between runs - this way, we can continue w/ the current estimated whitening transform. Disabling this will start a fresh transform each time
 
 
 # FES Parameters
 FES_toggle = 1
-FES_CHANNEL = "red"
+FES_CHANNEL = "blue"
 FES_TIMING_OFFSET = 7 
 # above for motor FES, cut out X seconds before the full duration of movement. This should represent when the robot will naturally reach the end of motion (in successful case)
 
-# Feedback mode durante preparación: "FES" o "GLOVE"
-PREP_FEEDBACK_MODE = "FES"  # cambiar a "FES" o "GLOVE" para usar estimulación
+# Feedback mode durante preparación:
+#   "NONE"  = no activar nada durante preparación; el guante/FES solo se usan como reward final.
+#   "GLOVE" = pulso del guante durante preparación MI.
+#   "FES"   = FES sensorial durante preparación MI si FES_toggle == 1.
+PREP_FEEDBACK_MODE = "FES"
 
 FORCE_MI_PREDICTION = False  # ← poner False cuando uses gorra real
 
@@ -171,6 +227,9 @@ TRIGGERS = {
     "REST_EARLYSTOP": "140",
     "REST_PROBS": "1000",
 
+    "INTERTRIAL_BEGIN": "600",
+    "INTERTRIAL_END": "620",
+
     "MASTER_UNLOCK": "500",
     "ACK_MASTER_UNLOCK": "505",
     "MASTER_LOCK": "520",
@@ -213,16 +272,22 @@ UDP_FES = {
 }
 
 UDP_CONTROL_BIND = {
-    "IP":   "192.168.2.2",  # your control Control Modul's IP
+    "IP":   "0.0.0.0",  # Bind on any local interface; robot still receives UDP_ROBOT
     "PORT": 8080
 }
 
 
 # === Arduino actuator ===
-USE_ARDUINO = True          # Enable or disable Arduino actuator
+USE_ARDUINO = False         # Enable or disable Arduino actuator
 ARDUINO_PORT = "/dev/ttyACM0"  # Windows: COMn / macOS: /dev/cu.usbmodemXXX
 ARDUINO_BAUD = 9600         # Arduino communication baud rate
 
-# Command mapping based on classifier output
-ARDUINO_CMD_MI   = b"1"     # Movement detected (label 200)
-ARDUINO_CMD_REST = b"0"     # Rest or ambiguous state detected
+# Command mapping based on classifier output.
+# Current pilot condition: detect CNV for hand OPENING.
+# Previous close-hand mapping was MI=b"1", REST=b"0"; this is intentionally
+# inverted so MI/reward opens the glove and rest/intertrial returns to baseline.
+ARDUINO_CMD_MI   = b"0"     # Movement detected (label 200): open hand
+ARDUINO_CMD_REST = b"1"     # Rest or ambiguous state detected: baseline/close
+ARDUINO_MI_LABEL = "Open"
+ARDUINO_INIT_SETTLE_SECONDS = 3.0 # Wait after initial close/baseline before trials start.
+ARDUINO_REST_LABEL = "Rest"

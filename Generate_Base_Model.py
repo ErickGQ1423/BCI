@@ -64,7 +64,8 @@ TRAIN_SUBJECTS = [
 
 # None        → modo MAESTRO   (genera maestro_model.pkl)
 # (dir, subj, sess) → modo PER-SUJETO (genera sub-{subj}_model.pkl)
-CALIB_SUBJECT = (XDF_CURR, "CNV_PILOT_SUBJ_012", "S002OFFLINE")  # modo PER-SUJETO
+CALIB_SUBJECT = (XDF_CURR, "CNV_PILOT_SUBJ_012", "S006")  # latest offline warmup
+MODEL_SUFFIX = "warmup_S006"
 
 MAESTRO_DIR = os.path.join(XDF_CURR, "sub-CNV_MAESTRO", "models")
 
@@ -72,8 +73,9 @@ if CALIB_SUBJECT is None:
     MODEL_SAVE_PATH = os.path.join(MAESTRO_DIR, "maestro_model.pkl")
 else:
     _, _cs, _css = CALIB_SUBJECT
+    _suffix = f"_{MODEL_SUFFIX}" if MODEL_SUFFIX else ""
     MODEL_SAVE_PATH = os.path.join(
-        XDF_CURR, f"sub-{_cs}", "models", f"sub-{_cs}_model.pkl"
+        XDF_CURR, f"sub-{_cs}", "models", f"sub-{_cs}_model{_suffix}.pkl"
     )
 
 PICKS        = ['FC1', 'Cz', 'CP1']

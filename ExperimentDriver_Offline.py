@@ -30,6 +30,7 @@ udp_socket_robot = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 fes_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 FES_toggle = config.FES_toggle
+OFFLINE_FILL_ALPHA = getattr(config, "OFFLINE_FEEDBACK_FILL_ALPHA", getattr(config, "FEEDBACK_FILL_ALPHA", 180))
 
 # --- ARDUINO CONFIG (AGREGADO) ---
 # OPCIÓN A: Env var tiene prioridad; si no está definida, usa config.ARDUINO_PORT
@@ -43,13 +44,19 @@ arduino_ser = None  # Variable para la conexión
 # ---------------------------------
 
 # Logging
+recording_subject = getattr(config, "RECORDING_SUBJECT", config.TRAINING_SUBJECT)
+recording_data_dir = Path(getattr(config, "RECORDING_DATA_DIR", config.DATA_DIR))
 logger = LoggerManager.auto_detect_from_subject(
-    subject=config.TRAINING_SUBJECT,
-    base_path=Path(config.DATA_DIR)
+    subject=recording_subject,
+    base_path=recording_data_dir
 )
 
 # Config snapshot
-loggable_fields = ["UDP_MARKER", "UDP_ROBOT", "UDP_FES", "ARM_SIDE", "TOTAL_TRIALS", "TIME_MI", "FES_toggle"]
+loggable_fields = [
+    "UDP_MARKER", "UDP_ROBOT", "UDP_FES", "ARM_SIDE", "TOTAL_TRIALS",
+    "TIME_MI", "FES_toggle", "TRAINING_SUBJECT", "DATA_DIR",
+    "RECORDING_SUBJECT", "RECORDING_DATA_DIR", "OFFLINE_FEEDBACK_FILL_ALPHA"
+]
 config_log_subset = {k: getattr(config, k) for k in loggable_fields if hasattr(config, k)}
 logger.save_config_snapshot(config_log_subset)
 
@@ -103,6 +110,37 @@ def arduino_write(cmd: bytes):
         logger.log_event(f"⚠️ Arduino write failed: {e}")
 
 
+def glove_cmd_for_mode(mode: int) -> bytes:
+    """Return configured glove command for MI/opening vs REST baseline."""
+    return (
+        getattr(config, "ARDUINO_CMD_MI", b"0")
+        if mode == 0 else
+        getattr(config, "ARDUINO_CMD_REST", b"1")
+    )
+
+
+def glove_cmd_rest() -> bytes:
+    """Configured closed/baseline glove command."""
+    return getattr(config, "ARDUINO_CMD_REST", b"1")
+
+
+def glove_cmd_mi() -> bytes:
+    """Configured open glove command."""
+    return getattr(config, "ARDUINO_CMD_MI", b"0")
+
+
+# Force glove to start every experiment in the configured closed/baseline state.
+if arduino_ser and arduino_ser.is_open:
+    arduino_write(glove_cmd_rest())
+    logger.log_event("🤚 Glove initialized to closed/baseline state.")
+    init_settle = float(getattr(config, "ARDUINO_INIT_SETTLE_SECONDS", 3.0))
+    if init_settle > 0:
+        logger.log_event(
+            f"⏳ Waiting {init_settle:.1f}s for glove to reach closed/baseline state."
+        )
+        time.sleep(init_settle)
+
+
 # ============================================================
 # VISUAL FUNCTIONS (TUS FUNCIONES EXACTAS)
 # ============================================================
@@ -147,16 +185,21 @@ def draw_arrow_directional(screen, pos_x, pos_y, size, color, direction="right")
     # 3. Draw Tip (Triangle)
     pygame.draw.polygon(screen, color, points)
 
+def draw_neutral_intertrial_screen():
+    """Neutral visual state used during intertrial and hidden REST preparation."""
+    pygame.display.get_surface().fill(config.black)
+    draw_fixation_cross(screen_width, screen_height)
+    draw_ball_fill(0, screen_width, screen_height, show_threshold=False, fill_alpha=OFFLINE_FILL_ALPHA)
+    draw_arrow_fill(0, screen_width, screen_height, show_threshold=False, fill_alpha=OFFLINE_FILL_ALPHA)
+    draw_time_balls(0, screen_width, screen_height, mode="single", single_pos=NEXT_INDICATOR_POS)
+    pygame.display.flip()
+
+
 def display_fixation_period(duration=3):
     start_time = time.time()
     clock = pygame.time.Clock()
     while time.time() - start_time < duration:
-        pygame.display.get_surface().fill(config.black)
-        draw_fixation_cross(screen_width, screen_height)
-        draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
-        draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
-        draw_time_balls(0, screen_width, screen_height, mode="single", single_pos=NEXT_INDICATOR_POS)
-        pygame.display.flip()
+        draw_neutral_intertrial_screen()
         for event in pygame.event.get():
             if event.type == pygame.QUIT: pygame.quit(); sys.exit()
         clock.tick(60)
@@ -168,12 +211,21 @@ def draw_pretrial_screen(next_color, time_ball_state, elapsed_ms=0, total_ms=200
 
     is_mi = (next_color == (255, 50, 50) or
              next_color == getattr(config, 'red', (255, 50, 50)))
+    rest_neutral_visual = (
+        (not is_mi)
+        and bool(getattr(config, "OFFLINE_REST_NEUTRAL_VISUAL", False))
+    )
+    if rest_neutral_visual:
+        # Keep REST preparation visually identical to the intertrial screen.
+        # Triggers/timing remain unchanged; only the cue is hidden.
+        draw_neutral_intertrial_screen()
+        return
 
     # ── Figura geométrica correspondiente ────────────────────
     if is_mi:
-        draw_arrow_fill(0, screen_width, screen_height, show_threshold=False)
+        draw_arrow_fill(0, screen_width, screen_height, show_threshold=False, fill_alpha=OFFLINE_FILL_ALPHA)
     else:
-        draw_ball_fill(0, screen_width, screen_height, show_threshold=False)
+        draw_ball_fill(0, screen_width, screen_height, show_threshold=False, fill_alpha=OFFLINE_FILL_ALPHA)
 
 # ── Countdown bar ────────────────────────────────────────
     bar_w     = int(screen_width * 0.2)
@@ -185,10 +237,11 @@ def draw_pretrial_screen(next_color, time_ball_state, elapsed_ms=0, total_ms=200
     bar_color = (255, 50, 50) if is_mi else (0, 120, 255)
 
     # Fondo gris
-    pygame.draw.rect(screen, (60, 60, 60),
-                     (bar_x, bar_y, bar_w, bar_h), border_radius=6)
+    if not rest_neutral_visual:
+        pygame.draw.rect(screen, (60, 60, 60),
+                         (bar_x, bar_y, bar_w, bar_h), border_radius=6)
 
-    if fill_w > 0:
+    if fill_w > 0 and not rest_neutral_visual:
         if is_mi:
             # Rojo: se llena de izquierda a derecha
             pygame.draw.rect(screen, bar_color,
@@ -209,27 +262,31 @@ def draw_pretrial_screen(next_color, time_ball_state, elapsed_ms=0, total_ms=200
         bg_rect = pygame.Rect(pos_x - base_size//2, pos_y - base_size//2,
                               base_size, base_size)
         pygame.draw.rect(screen, (255, 50, 50), bg_rect)
-    else:
+    elif not rest_neutral_visual:
         pygame.draw.circle(screen, (0, 120, 255), (pos_x, pos_y), base_size // 2)
 
     draw_time_balls(time_ball_state, screen_width, screen_height,
-                    mode="single", indicator_color=next_color,
+                    mode="single",
+                    indicator_color=(config.black if rest_neutral_visual else next_color),
                     single_pos=NEXT_INDICATOR_POS,
                     ball_radius=int(base_size * 0.4))
 
     # ── Texto ────────────────────────────────────────────────
     font_prep = pygame.font.SysFont(None, 72)
-    prep_msg  = f"Prepare: Flex {config.ARM_SIDE.upper()} Hand" if is_mi else "Rest"
-    txt_surface = font_prep.render(prep_msg, True, config.white)
-    screen.blit(txt_surface,
-                (screen_width // 2 - txt_surface.get_width() // 2,
-                 screen_height // 2 + 300))
+    mi_label = getattr(config, "ARDUINO_MI_LABEL", "Open")
+    prep_msg  = f"Prepare: {mi_label} {config.ARM_SIDE.upper()} Hand" if is_mi else "Rest"
+    if not rest_neutral_visual:
+        txt_surface = font_prep.render(prep_msg, True, config.white)
+        screen.blit(txt_surface,
+                    (screen_width // 2 - txt_surface.get_width() // 2,
+                     screen_height // 2 + 300))
 
     # ── Flecha direccional ───────────────────────────────────
     arrow_dir = "right" if is_mi else "left"
-    draw_arrow_directional(screen, pos_x, pos_y,
-                           base_size // 2.5, (255, 255, 255),
-                           direction=arrow_dir)
+    if not rest_neutral_visual:
+        draw_arrow_directional(screen, pos_x, pos_y,
+                               base_size // 2.5, (255, 255, 255),
+                               direction=arrow_dir)
 
     pygame.display.flip()
             
@@ -242,7 +299,7 @@ def show_feedback(duration, mode):
     # --- CONTROL ARDUINO (AGREGADO) ---
     if arduino_ser and arduino_ser.is_open:
         try:
-            command = b'1' if mode == 0 else b'0'
+            command = glove_cmd_for_mode(mode)
             arduino_ser.write(command)
         except Exception as e:
             logger.log_event(f"Arduino Error: {e}")
@@ -254,7 +311,7 @@ def show_feedback(duration, mode):
         draw_fixation_cross(screen_width, screen_height)
 
         if mode == 0: # MI
-            draw_arrow_fill(progress, screen_width, screen_height, False)
+            draw_arrow_fill(progress, screen_width, screen_height, False, fill_alpha=OFFLINE_FILL_ALPHA)
             # Maintain Visual Identity (Square)
             bg_rect = pygame.Rect(pos_x - base_size//2, pos_y - base_size//2, base_size, base_size)
             pygame.draw.rect(screen, (255, 50, 50), bg_rect)
@@ -262,11 +319,11 @@ def show_feedback(duration, mode):
                              pos_y - int(base_size*0.35), int(base_size*0.7), int(base_size*0.7)))
             # Keep Arrow
             draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), "right")
-            #msg = f"Imagine Closing {config.ARM_SIDE.upper()} Hand"
-            msg = f"Close {config.ARM_SIDE.upper()} Hand"
+            mi_label = getattr(config, "ARDUINO_MI_LABEL", "Open")
+            msg = f"{mi_label} {config.ARM_SIDE.upper()} Hand"
 
         else: # REST
-            draw_ball_fill(progress, screen_width, screen_height, False)
+            draw_ball_fill(progress, screen_width, screen_height, False, fill_alpha=OFFLINE_FILL_ALPHA)
             # Maintain Visual Identity (Circle)
             pygame.draw.circle(screen, (0, 120, 255), (pos_x, pos_y), base_size // 2)
             pygame.draw.circle(screen, (0, 120, 255), (pos_x, pos_y), int(base_size * 0.35))
@@ -274,8 +331,9 @@ def show_feedback(duration, mode):
             draw_arrow_directional(screen, pos_x, pos_y, base_size // 2.5, (255, 255, 255), "left")
             msg = "Rest"
 
-        txt = pygame.font.SysFont(None, 96).render(msg, True, config.white)
-        screen.blit(txt, (screen_width//2 - txt.get_width()//2, screen_height//2 + 300))
+        if msg:
+            txt = pygame.font.SysFont(None, 96).render(msg, True, config.white)
+            screen.blit(txt, (screen_width//2 - txt.get_width()//2, screen_height//2 + 300))
         pygame.display.flip()
         for event in pygame.event.get():
             if event.type == pygame.QUIT: return False
@@ -302,6 +360,20 @@ try:
         # PRE-TRIAL
         countdown_start = pygame.time.get_ticks()
         backdoor_mode, waiting = None, True
+        prep_sensory_fes_active = False
+
+        if next_mode == 0 and FES_toggle:
+            send_udp_message(
+                fes_socket,
+                config.UDP_FES["IP"],
+                config.UDP_FES["PORT"],
+                "FES_SENS_GO",
+                logger,
+            )
+            prep_sensory_fes_active = True
+            logger.log_event(
+                "⚡ FES_SENS_GO — inicio de barra de preparación (2.5 s)"
+            )
 
         while waiting:
             elapsed = pygame.time.get_ticks() - countdown_start
@@ -309,27 +381,54 @@ try:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_RIGHT: backdoor_mode = 0; waiting = False
                     if event.key == pygame.K_DOWN:  backdoor_mode = 1; waiting = False
-            if config.TIMING and elapsed >= 2000:
+            if config.TIMING and elapsed >= 2500:
                 waiting = False
             draw_pretrial_screen(next_color, time_ball_state=1,
-                                 elapsed_ms=elapsed, total_ms=2000)
+                                 elapsed_ms=elapsed, total_ms=2500)
             clock.tick(60)
+
+        if prep_sensory_fes_active:
+            send_udp_message(
+                fes_socket,
+                config.UDP_FES["IP"],
+                config.UDP_FES["PORT"],
+                "FES_STOP",
+                logger,
+            )
+            logger.log_event("⚡ FES_STOP — fin de barra de preparación")
 
         mode = backdoor_mode if backdoor_mode is not None else next_mode
 
         # EXECUTION
         trig = config.TRIGGERS["MI_BEGIN"] if mode == 0 else config.TRIGGERS["REST_BEGIN"]
         send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], trig, logger)
-        if mode == 0 and FES_toggle: send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_SENS_GO", logger)
+        if mode == 0 and FES_toggle:
+            send_udp_message(
+                fes_socket,
+                config.UDP_FES["IP"],
+                config.UDP_FES["PORT"],
+                "FES_MOTOR_GO",
+                logger,
+            )
+            logger.log_event("⚡ FES_MOTOR_GO — inicio del llenado rojo")
 
-        if not show_feedback(config.TIME_MI, mode): break
+        feedback_completed = show_feedback(config.TIME_MI, mode)
 
-        # ==============================================================================
-        # [NUEVO] FORZAR RELAJACIÓN INMEDIATA (MANDAR '0')
-        # ==============================================================================
-        # Esto asegura que apenas se quite el cuadro rojo, el guante se abra.
-        arduino_write(b'0')
-        # ==============================================================================
+        if mode == 0 and FES_toggle:
+            send_udp_message(
+                fes_socket,
+                config.UDP_FES["IP"],
+                config.UDP_FES["PORT"],
+                "FES_STOP",
+                logger,
+            )
+            logger.log_event("⚡ FES_STOP — fin del llenado rojo")
+
+        if not feedback_completed:
+            break
+
+        # Return glove to configured baseline immediately after feedback.
+        arduino_write(getattr(config, "ARDUINO_CMD_REST", b"1"))
 
         # END TRIAL / ROBOT
         end_trig = config.TRIGGERS["MI_END"] if mode == 0 else config.TRIGGERS["REST_END"]
@@ -337,7 +436,6 @@ try:
 
         if mode == 0:
             sel_traj = random.choice(config.ROBOT_TRAJECTORY)
-            if FES_toggle: send_udp_message(fes_socket, config.UDP_FES["IP"], config.UDP_FES["PORT"], "FES_MOTOR_GO", logger)
             send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_BEGIN"], logger)
             display_multiple_messages_with_udp([" "], [config.green], [0], config.TIME_ROB, [sel_traj, "g"], udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger)
             send_udp_message(udp_socket_marker, config.UDP_MARKER["IP"], config.UDP_MARKER["PORT"], config.TRIGGERS["ROBOT_END"], logger)
@@ -347,17 +445,31 @@ try:
         else:
             display_multiple_messages_with_udp([" "], [config.white], [0], config.TIME_STATIONARY, None, udp_socket_robot, config.UDP_ROBOT["IP"], config.UDP_ROBOT["PORT"], logger)
 
-        # Relajar guante entre trials (AGREGADO)
-        arduino_write(b'0')
+        # Baseline glove state between trials.
+        arduino_write(getattr(config, "ARDUINO_CMD_REST", b"1"))
 
-        display_fixation_period(3)
+        send_udp_message(
+            udp_socket_marker,
+            config.UDP_MARKER["IP"],
+            config.UDP_MARKER["PORT"],
+            config.TRIGGERS["INTERTRIAL_BEGIN"],
+            logger,
+        )
+        display_fixation_period(float(getattr(config, "INTERTRIAL_DURATION", 3.0)))
+        send_udp_message(
+            udp_socket_marker,
+            config.UDP_MARKER["IP"],
+            config.UDP_MARKER["PORT"],
+            config.TRIGGERS["INTERTRIAL_END"],
+            logger,
+        )
         current_trial += 1
 
 finally:
-    pygame.quit()
-    # Cierre seguro del puerto serial (AGREGADO)
-    arduino_write(b'0')
+    # Final instruction after the offline experiment: leave the glove open.
     if arduino_ser and arduino_ser.is_open:
+        arduino_write(glove_cmd_mi())
+        logger.log_event("🤚 Glove opened at experiment end.")
         arduino_ser.close()
+    pygame.quit()
     [s.close() for s in [udp_socket_marker, udp_socket_robot, fes_socket]]
-

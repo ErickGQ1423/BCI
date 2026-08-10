@@ -629,18 +629,26 @@ template = None
 
 # M2 cross-subject model state
 model_pkg       = None   # full model package (M2_LDA_shrink_MDM format)
+observer_model_pkg = None  # optional warmup package, logs only; never controls feedback
 prep_epoch      = None   # latest full prep epoch/window used by M2 online logic
 m2_ch_idx       = None   # channel indices for model picks in live stream
 _m2_last_step   = -1     # last M2 step logged (avoid duplicate logs per step)
 _m2_lda_probs   = []     # LDA P(MI) per step — accumulated for end-of-trial summary
+_m2_lda_compact_probs = []  # LDA compacto de 3 canales P(MI) per step
 _m2_mdm_probs   = []     # MDM confidence per step — accumulated for end-of-trial summary
+_m2_lr_probs    = []     # LR observer P(MI) per step
+_m2_svm_probs   = []     # SVM observer P(MI) per step
+_m2_shadow_records = []  # exact per-step P(MI) values; diagnostics only
+_m2_warmup_mdm_probs = []  # warmup observer MDM P(MI) per step
+_m2_warmup_lda_probs = []  # warmup observer LDA P(MI) per step
 _m2_quality_reject_count = 0
 _m2_quality_bad_trial = False
 _m2_quality_last_logged_step = -1
 
 # M2 Riemannian recentering state (one Prev_T per time step)
 m2_prev_T       = None   # list[ndarray] of size n_timepoints; None until first trial
-m2_rec_counter  = 0      # trials seen — controls geodesic alpha = 1/(counter+1)
+m2_rec_counter  = 0      # accepted recentering updates
+m2_rec_seen_trials = 0   # usable trials observed while recentering is enabled
 
 # Surfaces/screen geometry used by draw helpers
 screen = None
@@ -679,6 +687,20 @@ def reset_m2_quality_state():
     _m2_quality_reject_count = 0
     _m2_quality_bad_trial = False
     _m2_quality_last_logged_step = -1
+
+
+def _is_spd_finite(matrix, min_eig=1e-12):
+    """Small guard for Riemannian operations in online mode."""
+    try:
+        matrix = np.asarray(matrix, dtype=float)
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+            return False
+        if not np.isfinite(matrix).all():
+            return False
+        eigvals = np.linalg.eigvalsh(0.5 * (matrix + matrix.T))
+        return bool(np.all(eigvals > min_eig))
+    except Exception:
+        return False
 
 
 def _check_eeg_quality(window_ch):
@@ -742,6 +764,160 @@ def _check_eeg_quality(window_ch):
         return False, "abs_too_high", metrics
 
     return True, "ok", metrics
+
+
+def _predict_m2_pkg_pmi(pkg, step, epoch_ch, raw_step, all_t_idx, decoder_mode,
+                        recenter=False):
+    """Return (MDM P(MI), LDA P(MI)) for an M2 package without side effects."""
+    p_mdm_mi = 0.5
+    p_lda_mi = 0.5
+    if pkg is None or pkg.get("model_type") != "M2_LDA_shrink_MDM":
+        return p_mdm_mi, p_lda_mi
+
+    try:
+        mi_id = pkg["MI_ID"]
+        mdm_model = pkg["mdm_models"][step]
+        mdm_template = pkg["mdm_templates"][step]
+        t_end = all_t_idx[step] + 1
+        raw_for_mdm = (
+            raw_step
+            if decoder_mode == "M2_CUMULATIVE"
+            else epoch_ch[:, :t_end]
+        )
+        tmpl_cut = mdm_template
+        raw_for_mdm = _match_mdm_template_samples(
+            raw_for_mdm,
+            tmpl_cut,
+        )
+        extended = np.concatenate([raw_for_mdm, tmpl_cut], axis=0)
+        raw_cov = extended @ extended.T
+        tr = np.trace(raw_cov)
+        if tr > 1e-12 and np.isfinite(tr):
+            cov_norm = raw_cov / tr
+            pkg_requires_recenter = (
+                pkg.get("mdm_recenter_mode") == "train_riemann_mean"
+            )
+            if ((recenter or pkg_requires_recenter) and m2_prev_T is not None
+                    and step < len(m2_prev_T)
+                    and m2_prev_T[step] is not None):
+                try:
+                    T_inv = invsqrtm(m2_prev_T[step])
+                    cov_recentered = T_inv @ cov_norm @ T_inv.T
+                    cov_recentered = 0.5 * (cov_recentered + cov_recentered.T)
+                    if _is_spd_finite(cov_recentered):
+                        cov_norm = cov_recentered
+                except Exception:
+                    pass
+            cov = cov_norm + pkg["cov_reg"] * np.eye(cov_norm.shape[0])
+            cov = 0.5 * (cov + cov.T)
+            proba = mdm_model.predict_proba(np.expand_dims(cov, 0))[0]
+            mi_col = list(mdm_model.classes_).index(mi_id)
+            p_mdm_mi = float(proba[mi_col])
+    except Exception:
+        p_mdm_mi = 0.5
+
+    try:
+        mi_id = pkg["MI_ID"]
+        lda_model = pkg["skl_models"][step]
+        t_idx = all_t_idx[:step + 1]
+        if decoder_mode == "M2_CUMULATIVE":
+            lda_t_idx = np.linspace(0, raw_step.shape[1] - 1, step + 1).astype(int)
+            features = raw_step[:, lda_t_idx].flatten().reshape(1, -1)
+        else:
+            features = epoch_ch[:, t_idx].flatten().reshape(1, -1)
+        p_lda = lda_model.predict_proba(features)[0]
+        mi_col = list(lda_model.classes_).index(mi_id)
+        p_lda_mi = float(p_lda[mi_col])
+    except Exception:
+        p_lda_mi = 0.5
+
+    return p_mdm_mi, p_lda_mi
+
+
+def _predict_skl_pmi(model, mi_id, features):
+    """Return P(MI) from a sklearn-style model; 0.5 if unavailable."""
+    try:
+        proba = model.predict_proba(features)[0]
+        mi_idx = list(model.classes_).index(mi_id)
+        return float(proba[mi_idx])
+    except Exception:
+        return 0.5
+
+
+def _match_mdm_template_samples(signal, template):
+    """Muestrea señal y plantilla MDM con el mismo número de puntos."""
+    target_samples = int(template.shape[1])
+    if signal.shape[1] == target_samples:
+        return signal
+    if signal.shape[1] < 1 or target_samples < 1:
+        raise ValueError("MDM signal/template cannot be empty")
+    sample_indices = np.linspace(
+        0,
+        signal.shape[1] - 1,
+        target_samples,
+    ).round().astype(int)
+    return signal[:, sample_indices]
+
+
+def predict_m2_full_window(pkg, epoch_ch, recenter=False):
+    """Evaluate every available observer once on the complete M2 window."""
+    if pkg is None or pkg.get("model_type") != "M2_LDA_shrink_MDM":
+        return {}
+    if epoch_ch is None or epoch_ch.ndim != 2 or epoch_ch.shape[1] < 2:
+        return {}
+
+    n_steps = int(pkg["n_timepoints"])
+    step = n_steps - 1
+    all_t_idx = np.linspace(0, epoch_ch.shape[1] - 1, n_steps).astype(int)
+    raw_step = epoch_ch
+    p_mdm, p_lda = _predict_m2_pkg_pmi(
+        pkg,
+        step,
+        epoch_ch,
+        raw_step,
+        all_t_idx,
+        "M2_CUMULATIVE",
+        recenter=recenter,
+    )
+
+    features = epoch_ch[:, all_t_idx].flatten().reshape(1, -1)
+    mi_id = pkg["MI_ID"]
+    probabilities = {
+        "MDM": float(p_mdm),
+        "LDA_shrink": float(p_lda),
+    }
+
+    compact_models = pkg.get("compact_lda_models", [])
+    compact_picks = pkg.get("compact_lda_picks", [])
+    if len(compact_models) > step and compact_picks:
+        try:
+            compact_indices = [
+                pkg["picks"].index(channel)
+                for channel in compact_picks
+            ]
+            compact_features = epoch_ch[
+                compact_indices,
+                :,
+            ][:, all_t_idx].flatten().reshape(1, -1)
+            probabilities["LDA_shrink_3ch"] = _predict_skl_pmi(
+                compact_models[step],
+                mi_id,
+                compact_features,
+            )
+        except (KeyError, ValueError):
+            pass
+
+    observer_models = pkg.get("observer_skl_models", {})
+    for observer_name in ("LR", "SVM"):
+        models = observer_models.get(observer_name, [])
+        if len(models) > step:
+            probabilities[observer_name] = _predict_skl_pmi(
+                models[step],
+                mi_id,
+                features,
+            )
+
+    return probabilities
 
 
 # ============================================================
@@ -829,6 +1005,7 @@ def log_confusion_matrix_from_trial_summary(logger):
     incorrect = len(valid_trials) - correct
     ambiguous = len(ambiguous_trials)
     total = correct + incorrect + ambiguous
+    decided = correct + incorrect
 
     # Generate confusion matrix
     if not valid_trials.empty:
@@ -845,7 +1022,27 @@ def log_confusion_matrix_from_trial_summary(logger):
     # Log summary stats
     if total:
         percent_correct_incl_ambiguous = (correct / total) * 100
-        percent_correct_excl_ambiguous = (correct / (correct + incorrect)) * 100 if (correct + incorrect) > 0 else 0
+        percent_correct_excl_ambiguous = (correct / decided) * 100 if decided > 0 else 0
+        coverage = (decided / total) * 100
+        ambiguous_mi = (ambiguous_trials["True Label"] == 200).sum()
+        ambiguous_rest = (ambiguous_trials["True Label"] == 100).sum()
+        total_mi = (df["True Label"] == 200).sum()
+        total_rest = (df["True Label"] == 100).sum()
+        correct_mi = ((valid_trials["True Label"] == 200) & (valid_trials["Predicted Label"] == 200)).sum()
+        correct_rest = ((valid_trials["True Label"] == 100) & (valid_trials["Predicted Label"] == 100)).sum()
+        mi_recall_incl_ambiguous = (correct_mi / total_mi) * 100 if total_mi > 0 else 0
+        rest_recall_incl_ambiguous = (correct_rest / total_rest) * 100 if total_rest > 0 else 0
+        logger.log_event(
+            f"📊 Trial counts: total={total} | correct={correct} | incorrect={incorrect} "
+            f"| ambiguous={ambiguous} | decided={decided} ({coverage:.2f}%)"
+        )
+        logger.log_event(
+            f"📊 Ambiguous by class: MI={ambiguous_mi}/{total_mi} | REST={ambiguous_rest}/{total_rest}"
+        )
+        logger.log_event(
+            f"📊 Class recall incl. ambiguous as misses: MI={mi_recall_incl_ambiguous:.2f}% "
+            f"| REST={rest_recall_incl_ambiguous:.2f}%"
+        )
         logger.log_event(f"✅ % Total Accuracy (Including ambiguous): {percent_correct_incl_ambiguous:.2f}%")
         logger.log_event(f"✅ % Decision Accuracy (Excluding ambiguous): {percent_correct_excl_ambiguous:.2f}%")
         logger.log_event(f"⚠️ Ambiguous trials (not counted in exclusive metric): {ambiguous}")
@@ -985,7 +1182,11 @@ def handle_fes_activation(mode, running_avg_confidence, fes_active):
 def classify_real_time(eeg_state, window_size_samples, all_probabilities, predictions,
                        mode, leaky_integrator, update_recentering=True, elapsed_ms=None):
     global counter, Prev_T, prep_epoch
-    global m2_ch_idx, _m2_last_step, _m2_lda_probs, _m2_mdm_probs
+    global m2_ch_idx, _m2_last_step, _m2_lda_probs, _m2_lda_compact_probs
+    global _m2_mdm_probs
+    global _m2_lr_probs, _m2_svm_probs
+    global _m2_shadow_records
+    global _m2_warmup_mdm_probs, _m2_warmup_lda_probs
     global _m2_quality_reject_count, _m2_quality_bad_trial, _m2_quality_last_logged_step
 
     pygame.display.flip()
@@ -1019,8 +1220,27 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
         if not m2_ch_idx:
             return leaky_integrator.accumulated_probability, predictions, all_probabilities
 
-        n_steps   = model_pkg['n_timepoints']
-        step      = min(int((elapsed_ms or 0) / 250), n_steps - 1)
+        n_steps = model_pkg['n_timepoints']
+        requested_step = min(
+            int((elapsed_ms or 0) / 250),
+            n_steps - 1,
+        )
+        control_endpoint = float(
+            getattr(
+                config,
+                "PREP_CONTROL_ENDPOINT",
+                model_pkg["t_points"][-1],
+            )
+        )
+        max_control_step = int(
+            np.argmin(
+                np.abs(
+                    np.asarray(model_pkg["t_points"], dtype=float)
+                    - control_endpoint
+                )
+            )
+        )
+        step = min(requested_step, max_control_step)
         REST_ID   = model_pkg['REST_ID']
         MI_ID     = model_pkg['MI_ID']
 
@@ -1057,69 +1277,264 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
         p_mi = 0.5
         p_rest = 0.5
         mdm_confidence = 0.5
+        mdm_valid = False
+        lda_valid = False
+        lda_compact_valid = False
+        lr_valid = False
+        svm_valid = False
+        model_errors = {}
+        t_end = all_t_idx[step] + 1
+        if decoder_mode == "M2_CUMULATIVE":
+            raw_step = epoch_ch[:, -t_end:]
+        else:
+            raw_step = epoch_ch[:, :t_end]
         try:
             mdm_model    = model_pkg['mdm_models'][step]
             mdm_template = model_pkg['mdm_templates'][step]
-            t_end        = all_t_idx[step] + 1
-            if decoder_mode == "M2_CUMULATIVE":
-                raw_step = epoch_ch[:, -t_end:]
-            else:
-                raw_step = epoch_ch[:, :t_end]
-            tmpl_cut     = mdm_template[:, :t_end]
-            extended     = np.concatenate([raw_step, tmpl_cut], axis=0)
+            tmpl_cut     = mdm_template
+            raw_step_mdm = _match_mdm_template_samples(
+                raw_step,
+                tmpl_cut,
+            )
+            extended     = np.concatenate(
+                [raw_step_mdm, tmpl_cut],
+                axis=0,
+            )
             raw_cov      = extended @ extended.T
             tr           = np.trace(raw_cov)
-            if tr > 1e-12 and np.isfinite(tr):
-                cov_norm = raw_cov / tr
-                # Riemannian recentering: whiten relative to running mean
-                if (m2_prev_T is not None
-                        and step < len(m2_prev_T)
-                        and m2_prev_T[step] is not None):
-                    T_inv    = invsqrtm(m2_prev_T[step])
-                    cov_norm = T_inv @ cov_norm @ T_inv.T
-                cov    = cov_norm + model_pkg['cov_reg'] * np.eye(cov_norm.shape[0])
-                cov    = np.expand_dims(cov, 0)
-                mi_col = list(mdm_model.classes_).index(MI_ID)
-                proba  = mdm_model.predict_proba(cov)[0]
-                p_mi = float(proba[mi_col])
-                p_rest = float(1.0 - p_mi)
-                mdm_confidence = p_mi if mode == 0 else p_rest
-        except Exception:
-            pass
+            if tr <= 1e-12 or not np.isfinite(tr):
+                raise ValueError("invalid covariance trace")
+            cov_norm = raw_cov / tr
+            # Riemannian recentering: whiten relative to running mean
+            model_requires_recenter = (
+                model_pkg.get("mdm_recenter_mode") == "train_riemann_mean"
+            )
+            if ((getattr(config, "RECENTERING", 0) or model_requires_recenter)
+                    and m2_prev_T is not None
+                    and step < len(m2_prev_T)
+                    and m2_prev_T[step] is not None):
+                try:
+                    T_inv = invsqrtm(m2_prev_T[step])
+                    cov_recentered = T_inv @ cov_norm @ T_inv.T
+                    cov_recentered = 0.5 * (cov_recentered + cov_recentered.T)
+                    if _is_spd_finite(cov_recentered):
+                        cov_norm = cov_recentered
+                except Exception as exc:
+                    model_errors["MDM_RECENTER"] = str(exc)
+            cov    = cov_norm + model_pkg['cov_reg'] * np.eye(cov_norm.shape[0])
+            cov    = 0.5 * (cov + cov.T)
+            cov    = np.expand_dims(cov, 0)
+            mi_col = list(mdm_model.classes_).index(MI_ID)
+            proba  = mdm_model.predict_proba(cov)[0]
+            p_mi = float(proba[mi_col])
+            if not np.isfinite(p_mi) or not 0.0 <= p_mi <= 1.0:
+                raise ValueError(f"invalid probability {p_mi}")
+            p_rest = float(1.0 - p_mi)
+            mdm_confidence = p_mi if mode == 0 else p_rest
+            mdm_valid = True
+        except Exception as exc:
+            model_errors["MDM"] = str(exc)
+
+        p_lda_mi = 0.5
+        p_lda_compact_mi = None
+        p_lr_mi = 0.5
+        p_svm_mi = 0.5
+        try:
+            t_idx = all_t_idx[:step + 1]
+            if decoder_mode == "M2_CUMULATIVE":
+                lda_t_idx = np.linspace(0, raw_step.shape[1] - 1, step + 1).astype(int)
+                features = raw_step[:, lda_t_idx].flatten().reshape(1, -1)
+            else:
+                features = epoch_ch[:, t_idx].flatten().reshape(1, -1)
+        except Exception as exc:
+            features = None
+            lda_t_idx = None
+            model_errors["FEATURES"] = str(exc)
+
+        try:
+            if features is None:
+                raise ValueError("features unavailable")
+            lda_model = model_pkg['skl_models'][step]
+            lda_proba = lda_model.predict_proba(features)[0]
+            lda_mi_col = list(lda_model.classes_).index(MI_ID)
+            p_lda_mi = float(lda_proba[lda_mi_col])
+            if not np.isfinite(p_lda_mi) or not 0.0 <= p_lda_mi <= 1.0:
+                raise ValueError(f"invalid probability {p_lda_mi}")
+            lda_valid = True
+        except Exception as exc:
+            model_errors["LDA"] = str(exc)
+
+        try:
+            compact_models = model_pkg.get("compact_lda_models", [])
+            compact_picks = model_pkg.get("compact_lda_picks", [])
+            if len(compact_models) > step and compact_picks:
+                if features is None or lda_t_idx is None:
+                    raise ValueError("features unavailable")
+                compact_indices = [
+                    model_pkg["picks"].index(channel)
+                    for channel in compact_picks
+                ]
+                compact_features = raw_step[
+                    compact_indices,
+                    :,
+                ][:, lda_t_idx].flatten().reshape(1, -1)
+                compact_model = compact_models[step]
+                compact_proba = compact_model.predict_proba(compact_features)[0]
+                compact_mi_col = list(compact_model.classes_).index(MI_ID)
+                p_lda_compact_mi = float(compact_proba[compact_mi_col])
+                if (
+                    not np.isfinite(p_lda_compact_mi)
+                    or not 0.0 <= p_lda_compact_mi <= 1.0
+                ):
+                    raise ValueError(
+                        f"invalid probability {p_lda_compact_mi}"
+                    )
+                lda_compact_valid = True
+        except Exception as exc:
+            model_errors["LDA3"] = str(exc)
+
+        observer_skl = model_pkg.get("observer_skl_models", {})
+        try:
+            if features is None or "LR" not in observer_skl:
+                raise ValueError("model or features unavailable")
+            lr_model = observer_skl["LR"][step]
+            lr_proba = lr_model.predict_proba(features)[0]
+            lr_mi_col = list(lr_model.classes_).index(MI_ID)
+            p_lr_mi = float(lr_proba[lr_mi_col])
+            if not np.isfinite(p_lr_mi) or not 0.0 <= p_lr_mi <= 1.0:
+                raise ValueError(f"invalid probability {p_lr_mi}")
+            lr_valid = True
+        except Exception as exc:
+            model_errors["LR"] = str(exc)
+
+        try:
+            if features is None or "SVM" not in observer_skl:
+                raise ValueError("model or features unavailable")
+            svm_model = observer_skl["SVM"][step]
+            svm_proba = svm_model.predict_proba(features)[0]
+            svm_mi_col = list(svm_model.classes_).index(MI_ID)
+            p_svm_mi = float(svm_proba[svm_mi_col])
+            if not np.isfinite(p_svm_mi) or not 0.0 <= p_svm_mi <= 1.0:
+                raise ValueError(f"invalid probability {p_svm_mi}")
+            svm_valid = True
+        except Exception as exc:
+            model_errors["SVM"] = str(exc)
+
+        control_model = str(getattr(config, "PREP_CONTROL_MODEL", "MDM")).upper()
+        if control_model in {"LDA", "LDA_SHRINK", "LDA_SHRINKAGE"}:
+            p_control_mi = p_lda_mi
+            control_name = "LDA_shrink"
+            control_valid = lda_valid
+        elif control_model in {"LDA3", "LDA_3CH", "LDA_SHRINK_3CH", "COMPACT_LDA"}:
+            p_control_mi = p_lda_compact_mi if p_lda_compact_mi is not None else 0.5
+            control_name = "LDA3"
+            control_valid = lda_compact_valid
+        elif control_model == "LR":
+            p_control_mi = p_lr_mi
+            control_name = "LR"
+            control_valid = lr_valid
+        elif control_model == "SVM":
+            p_control_mi = p_svm_mi
+            control_name = "SVM"
+            control_valid = svm_valid
+        else:
+            p_control_mi = p_mi
+            control_name = "MDM"
+            control_valid = mdm_valid
+
+        p_control_rest = 1.0 - p_control_mi
+        control_confidence = p_control_mi if mode == 0 else p_control_rest
+        predicted_label = 200 if p_control_mi >= 0.5 else 100
 
         # ── Acumular y loguear una vez por paso ───────────────
+        # The online loop calls this function faster than M2 advances its
+        # temporal step. Keep prep decisions based on unique M2 steps, not
+        # repeated display/classification ticks within the same step.
         if step != _m2_last_step:
             _m2_last_step = step
-            # LDA
-            try:
-                lda_model  = model_pkg['skl_models'][step]
-                t_idx      = all_t_idx[:step + 1]
-                if decoder_mode == "M2_CUMULATIVE":
-                    lda_t_idx = np.linspace(0, raw_step.shape[1] - 1, step + 1).astype(int)
-                    features = raw_step[:, lda_t_idx].flatten().reshape(1, -1)
-                else:
-                    features = epoch_ch[:, t_idx].flatten().reshape(1, -1)
-                p_lda      = lda_model.predict_proba(features)[0]
-                mi_idx_lda = list(lda_model.classes_).index(MI_ID)
-                p_lda_mi   = float(p_lda[mi_idx_lda])
-            except Exception:
-                p_lda_mi = 0.5
-            _m2_lda_probs.append(round(p_lda_mi, 3))
-            _m2_mdm_probs.append(round(p_mi, 3))
+            warmup_mdm_mi, warmup_lda_mi = _predict_m2_pkg_pmi(
+                observer_model_pkg,
+                step,
+                epoch_ch,
+                raw_step,
+                all_t_idx,
+                decoder_mode,
+                recenter=False,
+            )
+            _m2_lda_probs.append(
+                round(p_lda_mi, 3) if lda_valid else np.nan
+            )
+            if lda_compact_valid:
+                _m2_lda_compact_probs.append(
+                    round(p_lda_compact_mi, 3)
+                )
+            _m2_mdm_probs.append(round(p_mi, 3) if mdm_valid else np.nan)
+            _m2_lr_probs.append(round(p_lr_mi, 3) if lr_valid else np.nan)
+            _m2_svm_probs.append(round(p_svm_mi, 3) if svm_valid else np.nan)
+            _m2_shadow_records.append({
+                "step_index": int(step),
+                "step": int(step + 1),
+                "time": float(model_pkg["t_points"][step]),
+                "probabilities": {
+                    "MDM": float(p_mi) if mdm_valid else None,
+                    "LDA": float(p_lda_mi) if lda_valid else None,
+                    "LDA3": (
+                        float(p_lda_compact_mi)
+                        if lda_compact_valid
+                        else None
+                    ),
+                    "LR": float(p_lr_mi) if lr_valid else None,
+                    "SVM": float(p_svm_mi) if svm_valid else None,
+                },
+            })
+            if observer_model_pkg is not None:
+                _m2_warmup_mdm_probs.append(round(warmup_mdm_mi, 3))
+                _m2_warmup_lda_probs.append(round(warmup_lda_mi, 3))
             if logger:
+                compact_log = (
+                    f"{p_lda_compact_mi:.3f}"
+                    if lda_compact_valid
+                    else "NA"
+                )
+                mdm_log = f"{p_mi:.3f}" if mdm_valid else "NA"
+                lda_log = f"{p_lda_mi:.3f}" if lda_valid else "NA"
+                lr_log = f"{p_lr_mi:.3f}" if lr_valid else "NA"
+                svm_log = f"{p_svm_mi:.3f}" if svm_valid else "NA"
                 logger.log_event(
                     f"[M2_step] paso={step+1:02d}/{n_steps} "
                     f"t={model_pkg['t_points'][step]:+.2f}s  "
                     f"window={window_mode}  "
-                    f"MDM_PMI={p_mi:.3f}  "
-                    f"conf_{'MI' if mode == 0 else 'REST'}={mdm_confidence:.3f}  "
-                    f"LDA={p_lda_mi:.3f}"
+                    f"MDM_PMI={mdm_log}  "
+                    f"LDA={lda_log}  "
+                    f"LDA3={compact_log}  "
+                    f"LR={lr_log}  "
+                    f"SVM={svm_log}  "
+                    f"control={control_name}  "
+                    f"control_valid={control_valid}  "
+                    f"conf_{'MI' if mode == 0 else 'REST'}="
+                    f"{control_confidence:.3f}"
                 )
+                for failed_model, error_text in model_errors.items():
+                    logger.log_event(
+                        f"[MODEL_ERROR] step={step+1:02d}/{n_steps} "
+                        f"model={failed_model} error={error_text}"
+                    )
+                if observer_model_pkg is not None:
+                    logger.log_event(
+                        f"[M2_COMPARE] paso={step+1:02d}/{n_steps} "
+                        f"master_mdm_pmi={p_mi:.3f} "
+                        f"master_lda_pmi={p_lda_mi:.3f} "
+                        f"warmup_mdm_pmi={warmup_mdm_mi:.3f} "
+                        f"warmup_lda_pmi={warmup_lda_mi:.3f} "
+                        f"control={'MI' if p_control_mi >= 0.5 else 'REST'}"
+                    )
 
-        predicted_label = 200 if p_mi >= 0.5 else 100
-        predictions.append(predicted_label)
-        all_probabilities.append([time.time(), p_rest, p_mi])
-        return mdm_confidence, predictions, all_probabilities
+            if control_valid:
+                predictions.append(predicted_label)
+                all_probabilities.append(
+                    [time.time(), p_control_rest, p_control_mi]
+                )
+        return control_confidence, predictions, all_probabilities
 
     # ── Legacy mode ───────────────────────────────────────────
     try:
@@ -1198,16 +1613,46 @@ def classify_real_time(eeg_state, window_size_samples, all_probabilities, predic
     return current_confidence, predictions, all_probabilities
 
 
-def update_m2_recentering():
+def update_m2_recentering(
+    prep_prediction=None,
+    target_label=None,
+    prep_confidence=None,
+):
     """Actualiza el recentering Riemanniano M2 al final de cada trial.
 
     Calcula la covarianza extendida (señal + template) para cada uno de los
-    11 pasos usando el prep_epoch capturado al inicio del trial, y actualiza
-    m2_prev_T[step] mediante interpolación geodésica (α = 1/(counter+1)).
+    pasos usando el prep_epoch capturado al inicio del trial, y actualiza
+    m2_prev_T[step] mediante interpolación geodésica suave.
     """
-    global m2_prev_T, m2_rec_counter
+    global m2_prev_T, m2_rec_counter, m2_rec_seen_trials
 
     if not getattr(config, "RECENTERING", 0):
+        return
+
+    if (
+        getattr(config, "RECENTERING_REQUIRE_NON_AMBIGUOUS", True)
+        and prep_prediction is None
+    ):
+        if logger:
+            logger.log_event("[M2_recentering] skipped — ambiguous decision")
+        return
+
+    if (
+        getattr(config, "RECENTERING_REQUIRE_CORRECT", True)
+        and target_label is not None
+        and prep_prediction != target_label
+    ):
+        if logger:
+            logger.log_event("[M2_recentering] skipped — decision did not match target")
+        return
+
+    min_conf = float(getattr(config, "RECENTERING_MIN_CONFIDENCE", 0.0))
+    if prep_confidence is not None and prep_confidence < min_conf:
+        if logger:
+            logger.log_event(
+                f"[M2_recentering] skipped — confidence={prep_confidence:.3f} "
+                f"< {min_conf:.3f}"
+            )
         return
 
     if _m2_quality_bad_trial:
@@ -1218,6 +1663,15 @@ def update_m2_recentering():
     if model_pkg is None or prep_epoch is None or not m2_ch_idx:
         return
 
+    m2_rec_seen_trials += 1
+    min_trials = int(getattr(config, "RECENTERING_MIN_TRIALS", 0))
+    if m2_rec_seen_trials <= min_trials:
+        if logger:
+            logger.log_event(
+                f"[M2_recentering] warmup {m2_rec_seen_trials}/{min_trials} — no update"
+            )
+        return
+
     n_steps   = model_pkg['n_timepoints']
     n_samp    = prep_epoch.shape[1]
     all_t_idx = np.linspace(0, n_samp - 1, n_steps).astype(int)
@@ -1226,7 +1680,8 @@ def update_m2_recentering():
     if m2_prev_T is None:
         m2_prev_T = [None] * n_steps
 
-    alpha       = 1.0 / (m2_rec_counter + 1)
+    alpha       = float(getattr(config, "RECENTERING_ALPHA", 0.05))
+    alpha       = min(max(alpha, 0.0), 1.0)
     updated     = 0
     n_ext       = len(m2_ch_idx) * 2   # canales señal + canales template
     min_samples = n_ext + 2             # mínimo para covarianza de rango completo
@@ -1235,29 +1690,40 @@ def update_m2_recentering():
         try:
             mdm_template = model_pkg['mdm_templates'][step]
             t_end  = all_t_idx[step] + 1
-            if t_end < min_samples:
+            if mdm_template.shape[1] < min_samples:
                 continue  # covarianza rango-deficiente — saltar este paso
             raw_s  = epoch_ch[:, :t_end]
-            tmpl_s = mdm_template[:, :t_end]
+            tmpl_s = mdm_template
+            raw_s = _match_mdm_template_samples(raw_s, tmpl_s)
             ext    = np.concatenate([raw_s, tmpl_s], axis=0)
             raw_cov = ext @ ext.T
             tr = np.trace(raw_cov)
             if tr < 1e-12 or not np.isfinite(tr):
                 continue
             cov = raw_cov / tr
+            cov = 0.5 * (cov + cov.T)
+            cov += model_pkg['cov_reg'] * np.eye(cov.shape[0])
+            if not _is_spd_finite(cov):
+                continue
 
             if m2_prev_T[step] is None:
                 m2_prev_T[step] = cov
             else:
-                m2_prev_T[step] = geodesic_riemann(m2_prev_T[step], cov, alpha)
+                candidate = geodesic_riemann(m2_prev_T[step], cov, alpha)
+                candidate = 0.5 * (candidate + candidate.T)
+                if not _is_spd_finite(candidate):
+                    continue
+                m2_prev_T[step] = candidate
             updated += 1
         except Exception:
             pass
 
-    m2_rec_counter += 1
+    if updated > 0:
+        m2_rec_counter += 1
     if logger:
         logger.log_event(
-            f"[M2_recentering] trial={m2_rec_counter} | α={alpha:.3f} | "
+            f"[M2_recentering] accepted_updates={m2_rec_counter} | "
+            f"seen={m2_rec_seen_trials} | α={alpha:.3f} | "
             f"pasos actualizados={updated}/{n_steps}"
         )
 
@@ -1461,15 +1927,21 @@ def show_feedback(duration=5, mode=0, eeg_state=None):
         screen.fill(config.black)
         MI_fill, Rest_fill = calculate_fill_levels(running_avg_confidence, mode)
 
+        online_fill_alpha = getattr(
+            config,
+            "ONLINE_PREP_FEEDBACK_FILL_ALPHA",
+            getattr(config, "ONLINE_FEEDBACK_FILL_ALPHA", getattr(config, "FEEDBACK_FILL_ALPHA", 180))
+        )
+
         if mode == 0:
-            draw_arrow_fill(MI_fill, screen_width, screen_height)
-            draw_ball_fill(Rest_fill, screen_width, screen_height)
+            draw_arrow_fill(MI_fill, screen_width, screen_height, fill_alpha=online_fill_alpha)
+            draw_ball_fill(Rest_fill, screen_width, screen_height, fill_alpha=online_fill_alpha)
             message = pygame.font.SysFont(None, 96).render(
                 f"Imagine closing {config.ARM_SIDE.upper()} hand", True, config.white
             )
         else:
-            draw_ball_fill(Rest_fill, screen_width, screen_height)
-            draw_arrow_fill(MI_fill, screen_width, screen_height)
+            draw_ball_fill(Rest_fill, screen_width, screen_height, fill_alpha=online_fill_alpha)
+            draw_arrow_fill(MI_fill, screen_width, screen_height, fill_alpha=online_fill_alpha)
             message = pygame.font.SysFont(None, 96).render("Rest", True, config.white)
 
         draw_fixation_cross(screen_width, screen_height)

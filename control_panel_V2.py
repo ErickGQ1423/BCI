@@ -51,6 +51,7 @@ DRIVER_OFFLINE_PY = os.path.join(ROOT, "ExperimentDriver_Offline.py")
 FES_PY = os.path.join(ROOT, "FES_listener.py")
 STMSETUP_PY = os.path.join(ROOT, "STMsetup.py")
 INIT_SH = os.path.join(ROOT, "initialize_devices.sh")
+LABRECORDER_CFG = os.path.join(ROOT, "LabRecorder_CNVStudy.cfg")
 
 UDP_MARKER = ("127.0.0.1", 15000)  # readiness check (port-in-use)
 
@@ -67,6 +68,8 @@ DRIVERS = [
 
 # ----------------- Config read/write helpers -----------------
 SUBJECT_RE = re.compile(r'^(TRAINING_SUBJECT\s*=\s*)([\'"])([^\'"]+)\2\s*$', re.M)
+RECORDING_SUBJECT_RE = re.compile(r'^(RECORDING_SUBJECT\s*=\s*)([\'"])([^\'"]+)\2\s*$', re.M)
+RECORDING_DATA_DIR_RE = re.compile(r'^(RECORDING_DATA_DIR\s*=\s*)([\'"])([^\'"]+)\2\s*$', re.M)
 FES_RE     = re.compile(r'^(FES_toggle\s*=\s*)([01])\s*$', re.M)
 SIM_RE     = re.compile(r'^(SIMULATION_MODE\s*=\s*)(True|False)(\s*(#.*)?)\s*$', re.M)
 
@@ -118,6 +121,20 @@ def write_training_subject(val: str):
         sep = "" if (txt.endswith("\n") or txt == "") else "\n"
         new = txt + f"{sep}TRAINING_SUBJECT = \"{val}\"\n"
     write_atomic(CONFIG_PY, new)
+
+def write_recording_subject(val: str):
+    txt = read_text(CONFIG_PY)
+    if RECORDING_SUBJECT_RE.search(txt):
+        new = RECORDING_SUBJECT_RE.sub(rf'\g<1>"{val}"', txt)
+    else:
+        sep = "" if (txt.endswith("\n") or txt == "") else "\n"
+        new = txt + f"{sep}RECORDING_SUBJECT = \"{val}\"\n"
+    write_atomic(CONFIG_PY, new)
+
+def read_recording_data_dir(default="/home/lab-admin/Documents/CNVStudy"):
+    txt = read_text(CONFIG_PY)
+    m = RECORDING_DATA_DIR_RE.search(txt)
+    return m.group(3) if m else default
 
 def read_fes_toggle(default=0):
     txt = read_text(CONFIG_PY)
@@ -506,6 +523,7 @@ class ControlPanel(QMainWindow):
         for p in (self.marker, self.driver, self.fes):
             p.env["PYTHONUNBUFFERED"] = "1"
             p.env["TRAINING_SUBJECT"] = self.training_subject
+            p.env["RECORDING_SUBJECT"] = self.training_subject
             p.env["ARDUINO_ENABLED"]   = "1" if getattr(self, "arduino_enabled", False) else "0"
             p.env["ARDUINO_PORT"]      = getattr(self, "serial_port_name", "") or ""
             p.env["ARDUINO_BAUD"]      = str(getattr(self, "serial_baudrate", "9600"))
@@ -554,9 +572,11 @@ class ControlPanel(QMainWindow):
             return
         self.training_subject = val
         write_training_subject(val)
+        write_recording_subject(val)
         for p in (self.marker, self.driver, self.fes):
             p.env["TRAINING_SUBJECT"] = self.training_subject
-        self._append_log("Panel", f"[{self._ts()}] TRAINING_SUBJECT saved: {val}\n")
+            p.env["RECORDING_SUBJECT"] = self.training_subject
+        self._append_log("Panel", f"[{self._ts()}] TRAINING_SUBJECT/RECORDING_SUBJECT saved: {val}\n")
 
     def on_copy_subject(self):
         val = self.cmb_subject.currentText().strip()
@@ -886,10 +906,17 @@ class ControlPanel(QMainWindow):
         if self.labrec_term and self.labrec_term.state() != QProcess.NotRunning:
             return
 
+        recording_dir = read_recording_data_dir()
+        os.makedirs(recording_dir, exist_ok=True)
+
         self.labrec_term = QProcess(self)
         self.labrec_term.started.connect(lambda: (
             self._set_led(self.lbl_labrec, "running"),
-            self._append_log("Panel", f"[{self._ts()}] LabRecorder terminal opened\n")
+            self._append_log(
+                "Panel",
+                f"[{self._ts()}] LabRecorder terminal opened\n"
+                f"  Expected recording base: {recording_dir}\n"
+            )
         ))
         def _labrec_closed(code, status):
             self._set_led(self.lbl_labrec, "stopped")
@@ -898,7 +925,11 @@ class ControlPanel(QMainWindow):
         self.labrec_term.finished.connect(_labrec_closed)
 
         self.labrec_term.setProgram("gnome-terminal")
-        self.labrec_term.setArguments(["--wait", "--", "bash", "-lc", "LabRecorder"])
+        self.labrec_term.setWorkingDirectory(recording_dir)
+        self.labrec_term.setArguments([
+            "--wait", "--", "bash", "-lc",
+            f'cd "{recording_dir}" && LabRecorder -c "{LABRECORDER_CFG}"'
+        ])
         self.labrec_term.start()
 
     def on_open_eego(self):
@@ -968,11 +999,17 @@ class ControlPanel(QMainWindow):
 
     def _on_stdout(self, p: Proc, title: str):
         data: QByteArray = p.q.readAllStandardOutput()
-        p.out.extend(bytes(data)); self._render_combined_log(title, p)
+        p.out.extend(bytes(data))
+        if len(p.out) > 2 * 1024 * 1024:
+            del p.out[:-2 * 1024 * 1024]
+        self._render_combined_log(title, p)
 
     def _on_stderr(self, p: Proc, title: str):
         data: QByteArray = p.q.readAllStandardError()
-        p.err.extend(bytes(data)); self._render_combined_log(title, p)
+        p.err.extend(bytes(data))
+        if len(p.err) > 2 * 1024 * 1024:
+            del p.err[:-2 * 1024 * 1024]
+        self._render_combined_log(title, p)
 
     # ---------- Log helpers ----------
     def _on_log_target_changed(self, target: str):
