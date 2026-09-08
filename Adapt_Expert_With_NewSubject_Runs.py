@@ -81,7 +81,7 @@ except ImportError as exc:  # pragma: no cover
 # ============================================================
 DEFAULT_EXPERT_SUBJECT = "CNV_PILOT_SUBJ_021"
 DEFAULT_EXPERT_SESSION = "S001_OFFLINE_FES_GLOVE"
-DEFAULT_NEW_SUBJECT = "CNV_PILOT_SUBJ_023"
+DEFAULT_NEW_SUBJECT = "CNV_PILOT_SUBJ_025"
 DEFAULT_NEW_SESSION = "S001_OFFLINE"
 
 PICKS_CNV = [

@@ -11,8 +11,8 @@
         },
         "blue": {
             "pulse_width": 250.0,
-            "Sensory_current_mA": 2.0,
-            "Motor_current_mA": 3.0,
+            "Sensory_current_mA": 3.0,
+            "Motor_current_mA": 3.5,
             "duration_sense": 5,
             "duration_Motor": 5
         },

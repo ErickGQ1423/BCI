@@ -40,8 +40,8 @@ from Utils.stream_utils import get_channel_names_from_xdf, load_xdf
 # ============================================================
 # 1. CONFIGURACIÓN RÁPIDA
 # ============================================================
-subject = "CNV_PILOT_SUBJ_022"
-session = "S001_OFFLINE"
+subject = "CNV_PILOT_SUBJ_029"
+session = "S002_OFFLINE"
 base_dir = getattr(config, "DATA_DIR", "/home/lab-admin/Documents/CNVStudy")
 
 CHANNELS_TO_DROP = ["M1", "M2", "T7", "T8", "Fp1", "Fpz", "Fp2"]

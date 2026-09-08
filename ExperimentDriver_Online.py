@@ -1213,53 +1213,118 @@ def resolve_endpoint_control_decision(
             f"endpoint={endpoint:+.2f}s "
             f"p_mi={p_mi:.3f} threshold={mi_threshold:.2f}"
         )
-    if (
-        control_probability_key == "MDM"
-        and bool(getattr(config, "MDM_TEMPORAL_RESCUE_ENABLED", False))
-        and shadow_records
-    ):
-        lo = min(
-            float(getattr(config, "MDM_TEMPORAL_RESCUE_START", -1.25)),
-            float(getattr(config, "MDM_TEMPORAL_RESCUE_END", -0.75)),
-        )
-        hi = max(
-            float(getattr(config, "MDM_TEMPORAL_RESCUE_START", -1.25)),
-            float(getattr(config, "MDM_TEMPORAL_RESCUE_END", -0.75)),
-        )
-        rescue_threshold = float(
-            getattr(config, "MDM_TEMPORAL_RESCUE_THRESHOLD", mi_threshold)
-        )
-        required_votes = int(
-            getattr(config, "MDM_TEMPORAL_RESCUE_REQUIRED_VOTES", 2)
-        )
-        rescue_scores = []
-        for record in shadow_records:
-            record_time = float(record.get("time", np.nan))
-            if not (lo - 1e-9 <= record_time <= hi + 1e-9):
-                continue
-            record_p_mi = record.get("probabilities", {}).get("MDM")
-            if record_p_mi is None or not np.isfinite(record_p_mi):
-                continue
-            rescue_scores.append(float(record_p_mi))
 
-        rescue_votes = sum(
-            1 for score in rescue_scores if score >= rescue_threshold
-        )
-        if rescue_votes >= required_votes:
-            return 200, (
-                f"accepted_mi_temporal_rescue control=MDM "
-                f"endpoint={endpoint:+.2f}s endpoint_p_mi={p_mi:.3f} "
-                f"endpoint_threshold={mi_threshold:.2f} "
-                f"window=({lo:+.2f},{hi:+.2f}) votes={rescue_votes}/"
-                f"{len(rescue_scores)} required={required_votes} "
-                f"vote_threshold={rescue_threshold:.2f}"
-            )
     if p_mi <= rest_threshold:
         return 100, (
             f"accepted_rest control={control_probability_key} "
             f"endpoint={endpoint:+.2f}s "
             f"p_mi={p_mi:.3f} threshold={rest_threshold:.2f}"
         )
+
+    if (
+        control_probability_key == "MDM"
+        and bool(getattr(config, "MDM_WEIGHTED_RESCUE_ENABLED", False))
+        and shadow_records
+    ):
+        weighted_values = []
+        for record in sorted(shadow_records, key=lambda item: int(item["step_index"])):
+            record_time = float(record.get("time", np.nan))
+            if record_time > endpoint + 1e-9:
+                continue
+            record_p_mi = record.get("probabilities", {}).get("MDM")
+            if record_p_mi is None or not np.isfinite(record_p_mi):
+                continue
+            weighted_values.append(float(record_p_mi))
+
+        if weighted_values:
+            weights = np.arange(1, len(weighted_values) + 1, dtype=float)
+            weighted_p_mi = float(
+                np.average(np.asarray(weighted_values), weights=weights)
+            )
+            weighted_mi_threshold = float(
+                getattr(config, "MDM_WEIGHTED_MI_THRESHOLD", mi_threshold)
+            )
+            weighted_rest_threshold = float(
+                getattr(config, "MDM_WEIGHTED_REST_THRESHOLD", rest_threshold)
+            )
+            if weighted_p_mi >= weighted_mi_threshold:
+                return 200, (
+                    f"accepted_mi_mdm_weighted endpoint={endpoint:+.2f}s "
+                    f"endpoint_p_mi={p_mi:.3f} weighted_p_mi={weighted_p_mi:.3f} "
+                    f"n={len(weighted_values)} threshold={weighted_mi_threshold:.2f}"
+                )
+            if weighted_p_mi <= weighted_rest_threshold:
+                return 100, (
+                    f"accepted_rest_mdm_weighted endpoint={endpoint:+.2f}s "
+                    f"endpoint_p_mi={p_mi:.3f} weighted_p_mi={weighted_p_mi:.3f} "
+                    f"n={len(weighted_values)} threshold={weighted_rest_threshold:.2f}"
+                )
+
+    if (
+        control_probability_key == "MDM"
+        and bool(getattr(config, "VIEWER_TEMPORAL_RESCUE_ENABLED", False))
+        and shadow_records
+    ):
+        viewer_models = list(
+            getattr(
+                config,
+                "VIEWER_TEMPORAL_RESCUE_MODELS",
+                ["LDA", "LDA3", "LR", "SVM"],
+            )
+        )
+        required_votes = int(
+            getattr(config, "VIEWER_TEMPORAL_REQUIRED_VOTES", 3)
+        )
+        min_vote_fraction = float(
+            getattr(config, "VIEWER_TEMPORAL_MIN_VOTE_FRACTION", 0.60)
+        )
+
+        viewer_predictions = {}
+        for model_name in viewer_models:
+            model_votes = []
+            for record in sorted(
+                shadow_records, key=lambda item: int(item["step_index"])
+            ):
+                record_time = float(record.get("time", np.nan))
+                if record_time > endpoint + 1e-9:
+                    continue
+                model_p_mi = record.get("probabilities", {}).get(model_name)
+                if model_p_mi is None or not np.isfinite(model_p_mi):
+                    continue
+                model_votes.append(200 if float(model_p_mi) >= 0.5 else 100)
+
+            if not model_votes:
+                continue
+            mi_votes = sum(vote == 200 for vote in model_votes)
+            rest_votes = len(model_votes) - mi_votes
+            winner_votes = max(mi_votes, rest_votes)
+            if winner_votes / len(model_votes) < min_vote_fraction:
+                continue
+            viewer_predictions[model_name] = (
+                200 if mi_votes > rest_votes else 100
+            )
+
+        mi_viewers = [
+            name for name, prediction in viewer_predictions.items()
+            if prediction == 200
+        ]
+        rest_viewers = [
+            name for name, prediction in viewer_predictions.items()
+            if prediction == 100
+        ]
+        if len(mi_viewers) >= required_votes:
+            return 200, (
+                f"accepted_mi_viewer_temporal endpoint={endpoint:+.2f}s "
+                f"endpoint_p_mi={p_mi:.3f} viewers={mi_viewers} "
+                f"required={required_votes}/{len(viewer_models)}"
+            )
+        if len(rest_viewers) >= required_votes:
+            return 100, (
+                f"accepted_rest_viewer_temporal endpoint={endpoint:+.2f}s "
+                f"endpoint_p_mi={p_mi:.3f} viewers={rest_viewers} "
+                f"required={required_votes}/{len(viewer_models)}"
+            )
+
     return None, (
         f"ambiguous_endpoint control={control_probability_key} "
         f"endpoint={endpoint:+.2f}s "

@@ -17,7 +17,7 @@ TRAINING_SUBJECT = "CNV_PILOT_SUBJ_016"
 # online decoder can use a shared model while LabRecorder saves under the
 # participant/session being recorded.
 RECORDING_DATA_DIR = "/home/lab-admin/Documents/CNVStudy"
-RECORDING_SUBJECT = "CNV_PILOT_SUBJ_022"
+RECORDING_SUBJECT = "CNV_PILOT_SUBJ_029"
 # EEG Settings
 CAP_TYPE = 32  
 LOWCUT = 0.1  # Hz
@@ -76,19 +76,18 @@ ONLINE_BASELINE_END_OFFSET = 0.5 # Baseline ends 0.5 s before prep onset to avoi
 ACCURACY_THRESHOLD = 0.8  # OBS Accuracy threshold to determine "Correct" (plan to obsolete)
 THRESHOLD_MI = 0.6 #Threshold for MI "correct"
 THRESHOLD_REST = 0.50 #Threshold for REST "Correct"
-# Decisión primaria en el endpoint MDM congelado.
-# S021 Replay WarmUp: MDM muestra P(MI) inflada en REST; threshold alto
-# mejora REST sin perder MI para esta prueba online.
-ENDPOINT_MDM_MI_THRESHOLD = 0.85
-ENDPOINT_MDM_REST_THRESHOLD = 0.85
-# Rescate MI basado en la ventana fuerte observada en Replay.
-# Si el endpoint no alcanza MI, 2 votos MDM fuertes entre -1.25 y -0.75 s
-# también aceptan MI. REST sigue siendo ausencia de evidencia MI fuerte.
-MDM_TEMPORAL_RESCUE_ENABLED = True
-MDM_TEMPORAL_RESCUE_START = -1.50
-MDM_TEMPORAL_RESCUE_END = -0.50
-MDM_TEMPORAL_RESCUE_REQUIRED_VOTES = 4
-MDM_TEMPORAL_RESCUE_THRESHOLD = 0.85
+# Regla híbrida pseudo-online seleccionada:
+# 1) MDM endpoint -0.50 s, 2) MDM ponderado hasta -0.50 s,
+# 3) consenso temporal de observadores LDA/LDA3/LR/SVM.
+ENDPOINT_MDM_MI_THRESHOLD = 0.70
+ENDPOINT_MDM_REST_THRESHOLD = 0.30
+MDM_WEIGHTED_RESCUE_ENABLED = True
+MDM_WEIGHTED_MI_THRESHOLD = 0.70
+MDM_WEIGHTED_REST_THRESHOLD = 0.30
+VIEWER_TEMPORAL_RESCUE_ENABLED = True
+VIEWER_TEMPORAL_RESCUE_MODELS = ["LDA", "LDA3", "LR", "SVM"]
+VIEWER_TEMPORAL_REQUIRED_VOTES = 3
+VIEWER_TEMPORAL_MIN_VOTE_FRACTION = 0.60
 RELAXATION_RATIO = 0.0 # relaxation ratio for sustained MI during movement
 MIN_PREDICTIONS = 99 # Block legacy early stop; endpoint + temporal rescue control this test.
 MIN_FINAL_PREDICTIONS = 6 # Min valid predictions required to accept a final prep decision
@@ -114,7 +113,7 @@ EARLYSTOP_VALIDATION_ENABLED = False # LDA/LR también validan early stop MDM; s
 PREP_CONTROL_ENDPOINT = -0.50
 WARMUP_OBSERVER_ENABLED = False
 WARMUP_MODEL_PATH = "/home/lab-admin/Documents/CurrentStudy/sub-CNV_PILOT_SUBJ_012/models/sub-CNV_PILOT_SUBJ_012_model_warmup_S005_OFFLINE.pkl"
-ONLINE_MODEL_PATH = "/home/lab-admin/Documents/CNVStudy/sub-CNV_PILOT_SUBJ_021/models/sub-CNV_PILOT_SUBJ_021_model_motorcap_S001_OFFLINE_FES_GLOVE.pkl"
+ONLINE_MODEL_PATH = "/home/lab-admin/Documents/CNVStudy/sub-CNV_PILOT_SUBJ_029/models/sub-CNV_PILOT_SUBJ_029_model_expert-SUBJ021_plus-4runs_S002_OFFLINE.pkl"
 OFFLINE_FEEDBACK_FILL_ALPHA = 255 # 0 transparent, 255 opaque for offline MI/REST fill visuals
 OFFLINE_REST_NEUTRAL_VISUAL = True # Offline only: keep REST triggers/timing but hide REST text/blue visual cue.
 ONLINE_REST_NEUTRAL_PREP_VISUAL = True # Online only: keep REST prep predictions/triggers but show neutral intertrial visual.
